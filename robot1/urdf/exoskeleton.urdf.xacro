@@ -1,0 +1,135 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro"
+    name="exoskeleton">
+    <material name="yellow">
+        <color rgba="1.0 1.0 0.0 1.0" />
+    </material>
+
+    <material name="orange">
+        <color rgba="1.0 0.4 0.0 1.0" />
+    </material>
+    <link name="base_link" />
+
+    <link name="pelvis_link" />
+
+    <joint name="base_to_pelvis" type="fixed">
+        <parent link="base_link" />
+        <child link="pelvis_link" />
+        <origin xyz="0 0 0" />
+    </joint>
+    <xacro:macro name="leg" params="prefix y_offset">
+        <link name="${prefix}_hip_link">
+            <visual>
+                <origin xyz="0 0 -0.01" />
+                <geometry>
+                    <box size="0.1 0.1 0.02" />
+                </geometry>
+                <material name="orange" />
+            </visual>
+
+            <collision>
+                <origin xyz="0 0 -0.01" />
+                <geometry>
+                    <box size="0.1 0.1 0.02" />
+                </geometry>
+            </collision>
+        </link>
+        <link name="${prefix}_thigh_link">
+            <visual>
+                <origin xyz="0 0 -0.15" />
+                <geometry>
+                    <cylinder radius="0.02" length="0.3" />
+                </geometry>
+                <material name="yellow" />
+            </visual>
+
+            <collision>
+                <origin xyz="0 0 -0.15" />
+                <geometry>
+                    <box size="0.02 0.02 0.3" />
+                </geometry>
+            </collision>
+        </link>
+        <link name="${prefix}_calf_link">
+            <visual>
+                <origin xyz="0 0 -0.15" />
+                <geometry>
+                    <cylinder radius="0.02" length="0.3" />
+                </geometry>
+                <material name="yellow" />
+            </visual>
+
+            <collision>
+                <origin xyz="0 0 -0.15" />
+                <geometry>
+                    <box size="0.02 0.02 0.3" />
+                </geometry>
+            </collision>
+        </link>
+        <link name="${prefix}_foot_link">
+            <visual>
+                <origin xyz="0 0 -0.005" />
+                <geometry>
+                    <box size="0.15 0.10 0.01" />
+                </geometry>
+                <material name="orange" />
+            </visual>
+
+            <collision>
+                <origin xyz="0 0 -0.005" />
+                <geometry>
+                    <box size="0.15 0.10 0.01" />
+                </geometry>
+            </collision>
+        </link>
+        <joint name="${prefix}_pelvis_joint" type="fixed">
+            <parent link="pelvis_link" />
+            <child link="${prefix}_hip_link" />
+            <origin xyz="0 ${y_offset} 0" />
+        </joint>
+        <joint name="${prefix}_hip_joint" type="revolute">
+            <parent link="${prefix}_hip_link" />
+            <child link="${prefix}_thigh_link" />
+
+            <origin xyz="0 0 -0.02" />
+
+            <axis xyz="0 1 0" />
+
+            <limit
+                lower="0.0"
+                upper="1.57"
+                effort="100"
+                velocity="100" />
+        </joint>
+        <joint name="${prefix}_knee_joint" type="revolute">
+            <parent link="${prefix}_thigh_link" />
+            <child link="${prefix}_calf_link" />
+
+            <origin xyz="0 0 -0.30" />
+
+            <axis xyz="0 1 0" />
+
+            <limit
+                lower="-1.57"
+                upper="0"
+                effort="100"
+                velocity="100" />
+        </joint>
+        <joint name="${prefix}_foot_joint" type="fixed">
+            <parent link="${prefix}_calf_link" />
+            <child link="${prefix}_foot_link" />
+
+            <origin xyz="-0.05 0 -0.30" />
+        </joint>
+
+    </xacro:macro>
+
+    <xacro:leg
+        prefix="left"
+        y_offset="-0.10" />
+
+    <xacro:leg
+        prefix="right"
+        y_offset="0.10" />
+
+</robot>
