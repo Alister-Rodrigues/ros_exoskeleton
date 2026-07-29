@@ -2,15 +2,15 @@ import math
 import rclpy
 import sys
 import random
+import time
 from datetime import datetime
-import math
 # pyqt imports
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPointF
 from PyQt6.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QBrush, QConicalGradient
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFrame, QPushButton, QSizePolicy, QGraphicsDropShadowEffect, QStackedWidget,
-    QSlider, QButtonGroup
+    QSlider, QButtonGroup, QTextEdit, QScrollArea
 )
 # Node imports
 import rclpy
@@ -172,6 +172,107 @@ class Bar(QWidget):
         p.drawRoundedRect(0, 0, int(fw), h, h / 2, h / 2)
 
 
+class BatteryWidget(QWidget):
+    """Compact animated battery icon + percentage + voltage label for TitleBar.
+
+    The battery body is drawn as a rounded rectangle filled proportionally
+    to the current percentage.  Colour transitions:
+      ≥ 50 %  -> GREEN
+       20-50 % -> ORANGE
+      < 20 %  -> RED  (also pulses opacity to warn)
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pct   = 78.0     # starting simulated value
+        self._volt  = 24.6
+        self._alpha = 255      # for low-battery pulse
+        self._pulse_dir = -1
+
+        self.setFixedSize(155, 40)
+        self.setStyleSheet("background:transparent;")
+
+        # Pulse timer for < 20 % warning
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.timeout.connect(self._pulse_tick)
+
+    def update_battery(self, pct: float, volt: float):
+        self._pct  = max(0.0, min(100.0, pct))
+        self._volt = volt
+        if self._pct < 20.0:
+            if not self._pulse_timer.isActive():
+                self._pulse_timer.start(60)
+        else:
+            self._pulse_timer.stop()
+            self._alpha = 255
+        self.update()
+
+    def _pulse_tick(self):
+        self._alpha += self._pulse_dir * 12
+        if self._alpha <= 80:
+            self._pulse_dir = 1
+        elif self._alpha >= 255:
+            self._pulse_dir = -1
+        self._alpha = max(80, min(255, self._alpha))
+        self.update()
+
+    def _color_for_pct(self, pct):
+        if pct >= 50:
+            return QColor(GREEN)
+        elif pct >= 20:
+            return QColor(ORANGE)
+        else:
+            c = QColor(RED)
+            c.setAlpha(self._alpha)
+            return c
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # ── Battery body ────────────────────────────────────────────────────
+        body_w, body_h = 44, 22
+        body_x, body_y = 0, (self.height() - body_h) // 2
+        tip_w,  tip_h  = 5,  10
+        tip_x  = body_x + body_w
+        tip_y  = body_y + (body_h - tip_h) // 2
+
+        fill_color = self._color_for_pct(self._pct)
+
+        # Outer border
+        p.setPen(QPen(fill_color, 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(body_x, body_y, body_w, body_h, 3, 3)
+
+        # Tip (positive terminal)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(fill_color)
+        p.drawRoundedRect(tip_x, tip_y, tip_w, tip_h, 1, 1)
+
+        # Fill bar inside body
+        pad    = 2
+        max_fw = body_w - pad * 2
+        fw     = int(max_fw * (self._pct / 100.0))
+        if fw > 0:
+            fill_color2 = self._color_for_pct(self._pct)
+            p.setBrush(fill_color2)
+            p.drawRoundedRect(body_x + pad, body_y + pad, fw, body_h - pad * 2, 2, 2)
+
+        # ── Text ─────────────────────────────────────────────────────────────
+        text_x = body_x + body_w + tip_w + 6
+        text_color = self._color_for_pct(self._pct)
+
+        # Percentage
+        p.setPen(QPen(text_color))
+        pct_font = QFont("Segoe UI", 13, QFont.Weight.Bold)
+        p.setFont(pct_font)
+        p.drawText(
+            QRectF(text_x, 0, 56, self.height()),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            f"{int(self._pct)}%"
+        )
+
+
 class LegGraphic(QWidget):
     """Stylised articulated exoskeleton."""
 
@@ -310,14 +411,6 @@ class TitleBar(QFrame):
         lay.addWidget(title)
         lay.addStretch()
 
-        self.conn_label = QLabel("📶 Connected")
-        self.conn_label.setStyleSheet(f"color:{GREEN}; font-size:12px; font-weight:600; background:transparent;")
-        lay.addWidget(self.conn_label)
-
-        batt = QLabel("🔋 78%")
-        batt.setStyleSheet(f"color:{GREEN}; font-size:12px; font-weight:600; background:transparent;")
-        lay.addWidget(batt)
-        lay.addSpacing(6)
 
         for symbol, slot in (
             ("—", self.window.showMinimized),
@@ -358,9 +451,9 @@ class StatCard(QFrame):
         lay.setContentsMargins(16, 12, 18, 12)
         lay.setSpacing(12)
 
-        icon = QLabel(icon_char)
-        icon.setStyleSheet(f"color:{icon_color}; font-size:19px; border:none; background:transparent;")
-        lay.addWidget(icon)
+        self.icon_label = QLabel(icon_char)
+        self.icon_label.setStyleSheet(f"color:{icon_color}; font-size:19px; border:none; background:transparent;")
+        lay.addWidget(self.icon_label)
 
         col = QVBoxLayout()
         col.setSpacing(1)
@@ -379,6 +472,19 @@ class StatCard(QFrame):
 
         lay.addLayout(col)
         lay.addStretch()
+
+    def set_status(self, text: str, value_color: str, icon_char: str = None, icon_color: str = None):
+        """Update the card value, colour, and optionally the icon."""
+        self.value_label.setText(text)
+        self.value_label.setStyleSheet(
+            f"color:{value_color}; font-size:16px; font-weight:700; border:none; background:transparent;"
+        )
+        if icon_char is not None:
+            self.icon_label.setText(icon_char)
+        if icon_color is not None:
+            self.icon_label.setStyleSheet(
+                f"color:{icon_color}; font-size:19px; border:none; background:transparent;"
+            )
 
 
 class ModeStatCard(QFrame):
@@ -417,6 +523,54 @@ class ModeStatCard(QFrame):
         self.name.setStyleSheet(f"color:{color}; font-size:14.5px; font-weight:700; border:none; background:transparent;")
         self.sub.setText(sub)
 
+class BatteryStatCard(QFrame):
+    """Status-strip battery card with animated BatteryWidget and live voltage label."""
+
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet(f"QFrame {{ background:{CARD_BG}; border:1px solid {BORDER}; border-radius:12px; }}")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(16, 10, 18, 10)
+        lay.setSpacing(12)
+
+        self.bat_icon = BatteryWidget()
+        lay.addWidget(self.bat_icon)
+
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        lab = QLabel("Battery")
+        lab.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11.5px; border:none; background:transparent;")
+        col.addWidget(lab)
+
+        self.pct_label = QLabel("78%")
+        self.pct_label.setStyleSheet(f"color:{GREEN}; font-size:16px; font-weight:700; border:none; background:transparent;")
+        col.addWidget(self.pct_label)
+
+        self.volt_label = QLabel("12.0 V · Li-Po")
+        self.volt_label.setStyleSheet(f"color:{TEXT_MUTED}; font-size:10.5px; border:none; background:transparent;")
+        col.addWidget(self.volt_label)
+
+        lay.addLayout(col)
+        lay.addStretch()
+
+    def update_battery(self, pct: float, volt: float):
+        """Called by MainWindow.on_battery_update() with live data."""
+        self.bat_icon.update_battery(pct, volt)
+
+        # Choose text colour
+        if pct >= 50:
+            color = GREEN
+        elif pct >= 20:
+            color = ORANGE
+        else:
+            color = RED
+
+        self.pct_label.setText(f"{int(pct)}%")
+        self.pct_label.setStyleSheet(
+            f"color:{color}; font-size:16px; font-weight:700; border:none; background:transparent;"
+        )
+        self.volt_label.setText(f"{volt:.2f} V · Li-Po")
+
 
 class StatusStrip(QFrame):
     def __init__(self):
@@ -426,8 +580,8 @@ class StatusStrip(QFrame):
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(14)
 
-        self.system_card = StatCard("✔", GREEN, "System Status", "GOOD", GREEN)
-        self.battery_card = StatCard("🔋", GREEN, "Battery", "78%", GREEN, "24.6 V · Li-Po")
+        self.system_card = StatCard("⚠", ORANGE, "System Status", "ESP32 Offline", ORANGE)
+        self.battery_card = BatteryStatCard()
         self.emg_card = StatCard("〜", GREEN, "EMG Signal Quality", "GOOD", GREEN)
         self.mode_card = ModeStatCard()
         self.time_card = StatCard("🕒", TEXT_MUTED, "Time", "12:45:30 PM", TEXT, "12 Jul 2025")
@@ -446,6 +600,13 @@ class StatusStrip(QFrame):
             self.emg_card.value_label.setText("Connected")
         else:
             self.emg_card.value_label.setText("GOOD")
+
+    def update_system_status(self, connected: bool):
+        """Update the System Status card based on ESP32 connection state."""
+        if connected:
+            self.system_card.set_status("GOOD", GREEN, "✔", GREEN)
+        else:
+            self.system_card.set_status("ESP32 Offline", ORANGE, "⚠", ORANGE)
 
     def set_time_mode(self, mode="time"):
         if mode == "session":
@@ -631,8 +792,9 @@ class ChannelRow(QFrame):
 class HomePage(QWidget):
     request_nav = pyqtSignal(int)
 
-    def __init__(self):
+    def __init__(self, main=None):
         super().__init__()
+        self.main = main
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 16, 20, 16)
         lay.setSpacing(16)
@@ -661,6 +823,39 @@ class HomePage(QWidget):
                                              PURPLE, PURPLE_BG))
         p_lay.addLayout(cards_row)
         lay.addWidget(panel)
+
+        # Universal Calibrate / Reset Button below Mode containers
+        calib_panel = card_frame()
+        c_lay = QHBoxLayout(calib_panel)
+        c_lay.setContentsMargins(22, 16, 22, 16)
+        c_lay.setSpacing(16)
+
+        icon_l = QLabel("⚠")
+        icon_l.setStyleSheet(f"color:{ORANGE}; font-size:22px; background:transparent; border:none;")
+        c_lay.addWidget(icon_l)
+
+        info_col = QVBoxLayout()
+        info_col.setSpacing(2)
+        calib_title = QLabel("SYSTEM CALIBRATION REQUIRED")
+        calib_title.setStyleSheet(f"color:{TEXT}; font-size:13px; font-weight:700; background:transparent; border:none;")
+        calib_desc = QLabel("Always calibrate and home motors to initial 0° limit switches before operating in any mode.")
+        calib_desc.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px; background:transparent; border:none;")
+        info_col.addWidget(calib_title)
+        info_col.addWidget(calib_desc)
+        c_lay.addLayout(info_col, 1)
+
+        self.calib_btn = QPushButton("↺ CALIBRATE MOTORS (RESET)")
+        self.calib_btn.setMinimumHeight(44)
+        self.calib_btn.setMinimumWidth(220)
+        self.calib_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.calib_btn.setStyleSheet(
+            f"QPushButton {{ background:{ORANGE_BG}; color:{ORANGE}; border:1.5px solid {ORANGE}; border-radius:10px; font-weight:800; font-size:12px; padding:0 16px; }}"
+            f"QPushButton:hover {{ background:{ORANGE}33; }}"
+        )
+        self.calib_btn.clicked.connect(self._calibrate_clicked)
+        c_lay.addWidget(self.calib_btn)
+
+        lay.addWidget(calib_panel)
 
         emg_panel = card_frame()
         e_lay = QVBoxLayout(emg_panel)
@@ -692,6 +887,12 @@ class HomePage(QWidget):
         for row in self.channels:
             row.spark.tick()
             row.val.setText(f"{row.spark.values[-1]:.2f} mV")
+
+    def _calibrate_clicked(self):
+        if hasattr(self, 'main') and self.main:
+            self.main.reset_motors()
+            self.calib_btn.setText("✔ CALIBRATING MOTORS...")
+            QTimer.singleShot(3000, lambda: self.calib_btn.setText("↺ CALIBRATE MOTORS (RESET)"))
 
     def _mode_card(self, index, badge, title, subtitle, desc, accent, tint):
         frame = QFrame()
@@ -750,8 +951,9 @@ class InfoBar(QFrame):
 class Mode1Page(QWidget):
     """EMG-Driven Control."""
 
-    def __init__(self):
+    def __init__(self, main=None):
         super().__init__()
+        self.main = main
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 16, 20, 16)
         outer.setSpacing(14)
@@ -876,7 +1078,17 @@ class Mode1Page(QWidget):
         ql = QVBoxLayout(quick)
         ql.setContentsMargins(18, 14, 18, 14)
         ql.setSpacing(8)
-        ql.addWidget(section_title("QUICK INFO"))
+        ql.addWidget(section_title("QUICK CONTROLS & INFO"))
+
+        home_b = QPushButton("⌂ Home Position (0.0°)")
+        home_b.setMinimumHeight(34)
+        home_b.setCursor(Qt.CursorShape.PointingHandCursor)
+        home_b.setStyleSheet(
+            f"QPushButton {{ background:{BLUE_BG}; color:{BLUE}; border:1px solid {BLUE}55; border-radius:8px; font-weight:700; font-size:11px; }}"
+            f"QPushButton:hover {{ background:{BLUE}33; }}"
+        )
+        home_b.clicked.connect(self._home_position_clicked)
+        ql.addWidget(home_b)
         for label, value in (("Step Speed", "0.8 m/s"), ("Step Count", "124"), ("Session Time", "00:02:35")):
             r = QHBoxLayout()
             l = QLabel(label)
@@ -902,6 +1114,11 @@ class Mode1Page(QWidget):
         for r in self.rows:
             r.spark.tick()
             r.val.setText(f"{r.spark.values[-1]:.2f} mV")
+
+    def _home_position_clicked(self):
+        if hasattr(self, 'main') and self.main:
+            self.main.publish_motor_angles(0.0, 0.0, 0.0, 0.0)
+            self.main.publish_joint_state(0.0, 0.0, 0.0, 0.0)
 
 
 class PostureCard(QFrame):
@@ -942,6 +1159,20 @@ class PostureCard(QFrame):
 
 class Mode2Page(QWidget):
     """Pre-Programmed Gait."""
+
+    def log_message(self, msg: str, color: str = None):
+        """Append a timestamped line to the live terminal log."""
+        if not hasattr(self, '_log_box'):
+            return
+        ts = datetime.now().strftime('%H:%M:%S')
+        c = color or TEXT
+        self._log_box.append(
+            f'<span style="color:{TEXT_MUTED};font-size:11px;">[{ts}]</span> '
+            f'<span style="color:{c};font-size:11px;">● {msg}</span>'
+        )
+        # Auto-scroll to bottom
+        sb = self._log_box.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def __init__(self, main_window):
         super().__init__()
@@ -984,9 +1215,9 @@ class Mode2Page(QWidget):
             "step_prepare",
         ]
         self.posture_cards = []
-        self.selected_gait = "KNEE BEND"
+        self.selected_gait = "stand_neutral"
         for i, name in enumerate(postures):
-            c = PostureCard(name, DISPLAY_NAMES[name], selected=(name == "KNEE BEND"))
+            c = PostureCard(name, DISPLAY_NAMES[name], selected=(name == "stand_neutral"))
             c.clicked_sig.connect(self._select_posture)
             grid.addWidget(c, i // 2, i % 2)
             self.posture_cards.append(c)
@@ -1100,20 +1331,23 @@ class Mode2Page(QWidget):
         jl.setContentsMargins(18, 14, 18, 14)
         jl.setSpacing(8)
         jl.addWidget(section_title("JOINT TARGET OVERVIEW"))
-        for label, value, color in (("Hip (L)", "-12°", GREEN), ("Knee (L)", "63°", BLUE),
-                                     ("Hip (R)", "-11°", GREEN), ("Knee (R)", "62°", BLUE)):
+        self.joint_overview_items = []
+        for label, value, color in (("Hip (L)", "0°", GREEN), ("Knee (L)", "0°", BLUE),
+                                     ("Hip (R)", "0°", GREEN), ("Knee (R)", "0°", BLUE)):
             r = QHBoxLayout()
             l = QLabel(label)
             l.setFixedWidth(56)
             l.setStyleSheet(f"color:{TEXT}; font-size:11px; border:none; background:transparent;")
             r.addWidget(l)
-            r.addWidget(Bar(abs(float(value.strip("°"))) / 90 * 100, color))
+            bar = Bar(0, color)
+            r.addWidget(bar)
             v = QLabel(value)
             v.setFixedWidth(36)
             v.setAlignment(Qt.AlignmentFlag.AlignRight)
             v.setStyleSheet(f"color:{color}; font-size:11px; font-weight:700; border:none; background:transparent;")
             r.addWidget(v)
             jl.addLayout(r)
+            self.joint_overview_items.append((bar, v))
         right_col.addWidget(joints)
 
         quick = card_frame()
@@ -1121,16 +1355,26 @@ class Mode2Page(QWidget):
         ql.setContentsMargins(18, 14, 18, 14)
         ql.setSpacing(8)
         ql.addWidget(section_title("QUICK CONTROLS"))
+
+        self.speed_slider = SliderRow("Speed Level", 10, BLUE, "%")
+        self.speed_slider.slider.valueChanged.connect(
+            lambda val: self.main.publish_motor_speed(val) if hasattr(self.main, 'publish_motor_speed') else None
+        )
+        ql.addWidget(self.speed_slider)
+        ql.addSpacing(4)
+
         btn_row = QHBoxLayout()
         pause_b = QPushButton("⏸ Pause")
         stop_b = QPushButton("■ Stop")
-        reset_b = QPushButton("↺ Reset")
+        home_b = QPushButton("⌂ Home Position")
         pause_b.setStyleSheet(f"QPushButton {{ background:{ORANGE_BG}; color:{ORANGE}; border:1px solid {ORANGE}55; border-radius:8px; padding:6px; font-weight:600; font-size:11px; }}")
         stop_b.setStyleSheet(f"QPushButton {{ background:{RED_BG}; color:{RED}; border:1px solid {RED}55; border-radius:8px; padding:6px; font-weight:600; font-size:11px; }}")
-        reset_b.setStyleSheet(f"QPushButton {{ background:{CARD_BG_2}; color:{TEXT}; border:1px solid {BORDER}; border-radius:8px; padding:6px; font-weight:600; font-size:11px; }}")
+        home_b.setStyleSheet(f"QPushButton {{ background:{BLUE_BG}; color:{BLUE}; border:1px solid {BLUE}55; border-radius:8px; padding:6px; font-weight:600; font-size:11px; }}")
 
         stop_b.clicked.connect(self.stop_clicked)
-        for b in (pause_b, stop_b, reset_b):
+        home_b.clicked.connect(self.home_position_clicked)
+        pause_b.clicked.connect(lambda: self.log_message('Paused.', ORANGE))
+        for b in (pause_b, stop_b, home_b):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_row.addWidget(b)
         ql.addLayout(btn_row)
@@ -1139,43 +1383,62 @@ class Mode2Page(QWidget):
 
         row.addWidget(right_wrap, 3)
 
-        # status updates log
+        # ── Live Terminal Log ─────────────────────────────────────────────
         log = card_frame()
         log_lay = QVBoxLayout(log)
         log_lay.setContentsMargins(18, 12, 18, 12)
-        log_lay.setSpacing(4)
-        log_lay.addWidget(section_title("STATUS UPDATES"))
-        for t, msg, color in (
-            ("12:45:10", "Posture 'Knee Bend' selected.", BLUE),
-            ("12:45:12", "Moving to target position...", BLUE),
-            ("12:45:18", "Target position reached. Holding posture.", GREEN),
-        ):
-            r = QHBoxLayout()
-            dot = QLabel("●")
-            dot.setStyleSheet(f"color:{color}; font-size:9px; border:none; background:transparent;")
-            r.addWidget(dot)
-            tl = QLabel(t)
-            tl.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px; border:none; background:transparent;")
-            r.addWidget(tl)
-            ml = QLabel(msg)
-            ml.setStyleSheet(f"color:{TEXT}; font-size:11px; border:none; background:transparent;")
-            r.addWidget(ml)
-            r.addStretch()
-            log_lay.addLayout(r)
+        log_lay.setSpacing(6)
+
+        log_header = QHBoxLayout()
+        log_header.addWidget(section_title("📟  TERMINAL LOG"))
+        log_header.addStretch()
+        live_dot = QLabel("● LIVE")
+        live_dot.setStyleSheet(f"color:{GREEN}; font-size:10.5px; font-weight:700; border:none; background:transparent;")
+        log_header.addWidget(live_dot)
+        clear_btn = QPushButton("Clear")
+        clear_btn.setFixedSize(50, 22)
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.setStyleSheet(
+            f"QPushButton {{ background:{CARD_BG_2}; color:{TEXT_MUTED}; border:1px solid {BORDER};"
+            f"border-radius:5px; font-size:10px; }}"
+        )
+        log_header.addWidget(clear_btn)
+        log_lay.addLayout(log_header)
+
+        self._log_box = QTextEdit()
+        self._log_box.setReadOnly(True)
+        self._log_box.setFixedHeight(90)
+        self._log_box.setStyleSheet(
+            f"QTextEdit {{ background:#080c1c; border:1px solid {BORDER};"
+            f"border-radius:8px; color:{TEXT}; font-family:monospace; font-size:11px;"
+            f"padding:6px; }}"
+        )
+        clear_btn.clicked.connect(self._log_box.clear)
+        log_lay.addWidget(self._log_box)
         outer.addWidget(log)
+
+        # Seed with a startup message
+        self.log_message('Mode 2 ready. Select a posture and press EXECUTE.', TEXT_MUTED)
 
     def _select_posture(self, key):
         for c in self.posture_cards:
             c.set_selected(c.key == key)
-        self.posture_name.setText(key)
-
         self.selected_gait = key
-        self.posture_name.setText(key)
-    
+        display = key.replace('_', ' ').upper()
+        self.posture_name.setText(display)
+        self.log_message(f"Posture selected: {display}", BLUE)
+
     def execute_clicked(self):
-        self.main.start_gait(
-            self.selected_gait
-        )
+        speed_val = self.speed_slider.slider.value() if hasattr(self, 'speed_slider') else 10
+        if hasattr(self.main, 'publish_motor_speed'):
+            self.main.publish_motor_speed(speed_val)
+
+        display = self.selected_gait.replace('_', ' ').upper()
+        self.log_message(f"Executing posture: {display} (Speed: {speed_val}%) — sending angles to M1 & M2...", BLUE)
+        if hasattr(self.main, 'execute_posture'):
+            self.main.execute_posture(self.selected_gait)
+        else:
+            self.main.start_gait(self.selected_gait)
 
     def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
         self.leg.hip_angle_l = left_hip
@@ -1185,6 +1448,12 @@ class Mode2Page(QWidget):
         self.leg.update()
         if hasattr(self, 'knee_angle_val_label'):
             self.knee_angle_val_label.setText(f"{int(abs(left_knee))}°")
+        if hasattr(self, 'joint_overview_items') and len(self.joint_overview_items) == 4:
+            for i, val in enumerate((left_hip, left_knee, right_hip, right_knee)):
+                bar, lab = self.joint_overview_items[i]
+                lab.setText(f"{int(val)}°")
+                bar.value = min(100.0, abs(val) / 90.0 * 100.0)
+                bar.update()
     
     def on_motor_feedback(self, left_hip, left_knee, right_hip, right_knee):
         self.leg.hip_angle_l = left_hip
@@ -1195,7 +1464,13 @@ class Mode2Page(QWidget):
         self.leg.update()
     
     def stop_clicked(self):
+        self.log_message('Motion stopped.', RED)
         self.main.stop_gait()
+
+    def home_position_clicked(self):
+        self.log_message('Returning all joints to Home Position (0.0°) ...', BLUE)
+        self.main.publish_motor_angles(0.0, 0.0, 0.0, 0.0)
+        self.main.publish_joint_state(0.0, 0.0, 0.0, 0.0)
 
 
 class SliderRow(QWidget):
@@ -1392,15 +1667,8 @@ class Mode3Page(QWidget):
             v.setStyleSheet(f"color:{color}; font-size:12.5px; font-weight:700; border:none; background:transparent;")
             cml.addWidget(l)
             cml.addWidget(v)
-        il = QLabel("Impedance Level")
-        il.setStyleSheet(f"color:{TEXT_MUTED}; font-size:10.5px; border:none; background:transparent; margin-top:4px;")
-        cml.addWidget(il)
-        iv_row = QHBoxLayout()
-        iv = QLabel("65%")
-        iv.setStyleSheet(f"color:{PURPLE}; font-size:13px; font-weight:800; border:none; background:transparent;")
-        iv_row.addWidget(iv)
-        cml.addLayout(iv_row)
-        cml.addWidget(Bar(65, PURPLE))
+        self.speed_slider = SliderRow("Speed Level", 10, PURPLE, "%")
+        cml.addWidget(self.speed_slider)
         mv_row = QHBoxLayout()
         mv_l = QLabel("Movement Status")
         mv_l.setStyleSheet(f"color:{TEXT_MUTED}; font-size:10.5px; border:none; background:transparent; margin-top:6px;")
@@ -1425,10 +1693,10 @@ class Mode3Page(QWidget):
         sliders_row.setSpacing(20)
         self.sliders = []
         for label, value, color in (
-            ("Motor 2 – Thigh A (Left)", 28, GREEN),
-            ("Motor 3 – Knee B (Left)", -47, BLUE),
-            ("Motor 4 – Thigh C (Right)", 22, PURPLE),
-            ("Motor 5 – Knee D (Right)", -55, ORANGE),
+            ("Motor 1 – Thigh A (Left)", 28, GREEN),
+            ("Motor 2 – Knee B (Left)", -47, BLUE),
+            ("Motor 3 – Thigh C (Right)", 22, PURPLE),
+            ("Motor 4 – Knee D (Right)", -55, ORANGE),
         ):
             s = SliderRow(label, value, color)
             sliders_row.addWidget(s)
@@ -1437,37 +1705,25 @@ class Mode3Page(QWidget):
         # Left Hip
         self.sliders[0].set_range(0, 90, "°")
         self.sliders[0].slider.valueChanged.connect(
-            lambda v: (
-                self.update_joint_ui(0, v),
-                self.update_robot()
-            )
+            lambda v: self.update_joint_ui(0, v)
         )
 
         # Left Knee
         self.sliders[1].set_range(-90, 0, "°")
         self.sliders[1].slider.valueChanged.connect(
-            lambda v: (
-                self.update_joint_ui(1, v),
-                self.update_robot()
-            )
+            lambda v: self.update_joint_ui(1, v)
         )
 
         # Right Hip
         self.sliders[2].set_range(0, 90, "°")
         self.sliders[2].slider.valueChanged.connect(
-            lambda v: (
-                self.update_joint_ui(2, v),
-                self.update_robot()
-            )
+            lambda v: self.update_joint_ui(2, v)
         )
 
         # Right Knee
         self.sliders[3].set_range(-90, 0, "°")
         self.sliders[3].slider.valueChanged.connect(
-            lambda v: (
-                self.update_joint_ui(3, v),
-                self.update_robot()
-            )
+            lambda v: self.update_joint_ui(3, v)
         )
 
         ml.addLayout(sliders_row)
@@ -1517,17 +1773,17 @@ class Mode3Page(QWidget):
         quick = card_frame()
         ql = QVBoxLayout(quick)
         ql.setContentsMargins(14, 12, 14, 12)
-        ql.addWidget(section_title("QUICK ACTIONS", TEXT_MUTED))
+        ql.addWidget(section_title("EXECUTION CONTROLS", TEXT_MUTED))
         qrow = QHBoxLayout()
         home_b = QPushButton("⌂ Home Position")
-        reset_b = QPushButton("↺ Reset All")
-        stop_b = QPushButton("■ Stop Motion")
+        exec_b = QPushButton("▶ Execute")
         home_b.setStyleSheet(f"QPushButton {{ background:{BLUE_BG}; color:{BLUE}; border:1px solid {BLUE}55; border-radius:8px; padding:6px; font-weight:600; font-size:10.5px; }}")
-        reset_b.setStyleSheet(f"QPushButton {{ background:{ORANGE_BG}; color:{ORANGE}; border:1px solid {ORANGE}55; border-radius:8px; padding:6px; font-weight:600; font-size:10.5px; }}")
-        stop_b.setStyleSheet(f"QPushButton {{ background:{RED_BG}; color:{RED}; border:1px solid {RED}55; border-radius:8px; padding:6px; font-weight:600; font-size:10.5px; }}")
-        for b in (home_b, reset_b, stop_b):
+        exec_b.setStyleSheet(f"QPushButton {{ background:{GREEN_BG}; color:{GREEN}; border:1px solid {GREEN}55; border-radius:8px; padding:6px; font-weight:600; font-size:10.5px; }}")
+        for b in (home_b, exec_b):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             qrow.addWidget(b)
+        exec_b.clicked.connect(self._execute_clicked)
+        home_b.clicked.connect(self._home_position_clicked)
         ql.addLayout(qrow)
         bottom_row.addWidget(quick, 3)
 
@@ -1536,7 +1792,20 @@ class Mode3Page(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.rt_spark.tick())
         self.timer.start(600)
-    
+
+    # ── Mode 3 Quick Action Handlers ─────────────────────────────────────────
+
+    def _execute_clicked(self):
+        """Send speed then joint angles to motors."""
+        speed_val = self.speed_slider.slider.value()
+        self.main.publish_motor_speed(speed_val)
+        self.update_robot()
+
+    def _home_position_clicked(self):
+        """Move all joints back to 0° (stand neutral)."""
+        self.main.publish_motor_angles(0.0, 0.0, 0.0, 0.0)
+        self.main.publish_joint_state(0.0, 0.0, 0.0, 0.0)
+
     def update_robot(self):
         self.leg.update()
         self.main.publish_joint_state(
@@ -1649,7 +1918,13 @@ class MainWindow(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        outer.addWidget(TitleBar(self))
+        self.title_bar_ref = TitleBar(self)
+        outer.addWidget(self.title_bar_ref)
+
+        self._last_conn_time = 0.0
+        self._conn_timeout_timer = QTimer(self)
+        self._conn_timeout_timer.timeout.connect(self._check_conn_timeout)
+        self._conn_timeout_timer.start(1000)
 
         self.status_strip = StatusStrip()
         strip_wrap = QFrame()
@@ -1677,9 +1952,9 @@ class MainWindow(QWidget):
         self.stack = QStackedWidget()
         content_lay.addWidget(self.stack)
 
-        self.home_page = HomePage()
+        self.home_page = HomePage(self)
         self.home_page.request_nav.connect(self.go_to)
-        self.mode1_page = Mode1Page()
+        self.mode1_page = Mode1Page(self)
         self.mode2_page = Mode2Page(self)
         self.mode3_page = Mode3Page(self)
         self.params_page = PlaceholderPage("PARAMETERS")
@@ -1704,10 +1979,34 @@ class MainWindow(QWidget):
     
     def publish_joint_state(self, left_hip, left_knee, right_hip, right_knee):
         self.ros.publish_joint_state(left_hip, left_knee, right_hip, right_knee)
-    
+
     def publish_motor_angles(self, left_hip, left_knee, right_hip, right_knee):
         self.ros.publish_motor_angles(left_hip, left_knee, right_hip, right_knee)
-    
+
+    def publish_motor_speed(self, speed):
+        self.ros.publish_motor_speed(speed)
+
+    def reset_motors(self):
+        """Publish reset_motors command on /motor_reset topic."""
+        self.ros.publish_reset_motors()
+        self.bottom_bar.set_message(">> System Calibration: reset_motors command sent to ESP32.", ORANGE)
+        if hasattr(self.mode2_page, 'log_message'):
+            self.mode2_page.log_message('>> reset_motors sent to ESP32.', ORANGE)
+
+    def on_battery_update(self, pct: float, volt: float):
+        """Receive live battery data from JointStateNode and push to UI."""
+        # Update BatteryStatCard in the StatusStrip
+        self.status_strip.battery_card.update_battery(pct, volt)
+
+    def on_connection_update(self, connected: bool):
+        if connected:
+            self._last_conn_time = time.time()
+        self.status_strip.update_system_status(connected)
+
+    def _check_conn_timeout(self):
+        if time.time() - self._last_conn_time > 2.0:
+            self.status_strip.update_system_status(False)
+
     def on_joint_state(self, left_hip, left_knee, right_hip, right_knee):
         self.mode2_page.set_joint_angles(
             left_hip,
@@ -1729,6 +2028,12 @@ class MainWindow(QWidget):
         if hasattr(self.mode3_page, "on_motor_feedback"):
             self.mode3_page.on_motor_feedback(left_hip, left_knee, right_hip, right_knee)
         
+    def execute_posture(self, posture_name):
+        if hasattr(self.ros, 'execute_posture'):
+            self.ros.execute_posture(posture_name)
+        else:
+            self.ros.start_gait(posture_name, 5, 2.0)
+
     def start_gait(self, gait_name, repeats=5, hold_time=2.0):
         self.ros.start_gait(gait_name, repeats, hold_time)
 
@@ -1749,9 +2054,7 @@ def main():
     
     ros_timer = QTimer()
     ros_timer.timeout.connect(
-        lambda: (
-        rclpy.spin_once(ros_node, timeout_sec=0.0),
-        )
+        lambda: rclpy.spin_once(ros_node, timeout_sec=0.0) if rclpy.ok() else None
     )
     ros_timer.start(10)
     exit_code = app.exec()

@@ -1,7 +1,7 @@
 from glob import glob
 from setuptools import find_packages, setup
 
-package_name = 'dashboard'
+package_name = 'motor_control'
 
 setup(
     name=package_name,
@@ -11,22 +11,20 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', glob('launch/*.py')),
+        ('share/' + package_name + '/launch', glob('launch/*')),
     ],
-    install_requires=['setuptools', 'PyQt6'],
+    install_requires=['setuptools', 'pyserial'],
     zip_safe=True,
-    maintainer='alister',
-    maintainer_email='alister@todo.todo',
-    description='TODO: Package description',
+    maintainer='shijaz',
+    maintainer_email='shijaz@todo.todo',
+    description='Serial bridge node: ROS2 -> ESP32 motor control via UART',
     license='TODO: License declaration',
     extras_require={
-        'test': [
-            'pytest',
-        ],
+        'test': ['pytest'],
     },
     entry_points={
         'console_scripts': [
-            'pyqt6_node = dashboard.pyqt6_node:main'
+            'serial_bridge = motor_control.serial_bridge_node:main',
         ],
     },
 )
