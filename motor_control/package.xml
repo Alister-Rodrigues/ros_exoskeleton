@@ -1,15 +1,14 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>dashboard</name>
+  <name>motor_control</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="alister@todo.todo">alister</maintainer>
+  <description>Serial bridge: subscribes to ROS2 motor_commands and forwards to ESP32 via UART</description>
+  <maintainer email="shijaz@todo.todo">shijaz</maintainer>
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
-  <depend>sensor_msgs</depend>
   <depend>exoskeleton_interfaces</depend>
 
   <test_depend>ament_copyright</test_depend>

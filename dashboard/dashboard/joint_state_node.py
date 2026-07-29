@@ -2,7 +2,8 @@ import math
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from exoskeleton_interfaces.msg import MotorAngles
+from std_msgs.msg import String, Int32, Bool
+from exoskeleton_interfaces.msg import MotorAngles, BatteryStatus
 
 
 class JointStateNode(Node):
@@ -70,6 +71,22 @@ class JointStateNode(Node):
                 "left_knee_joint": 0.0,
                 "right_hip_joint": 0.45,
                 "right_knee_joint": -0.70
+            },
+
+            "sit_like_bend":
+            {
+                "left_hip_joint": 1.40,
+                "left_knee_joint": -1.30,
+                "right_hip_joint": 1.40,
+                "right_knee_joint": -1.30
+            },
+
+            "step_prepare":
+            {
+                "left_hip_joint": 0.45,
+                "left_knee_joint": -0.70,
+                "right_hip_joint": 0.0,
+                "right_knee_joint": 0.0
             }
 
         }
@@ -129,6 +146,17 @@ class JointStateNode(Node):
         self.motor_sub = self.create_subscription(
             MotorAngles, 'motor_feedback', self.motor_feedback, 10
         )
+        # Publisher for reset command → serial_bridge_node
+        self.reset_pub = self.create_publisher(String, '/motor_reset', 10)
+        self.speed_pub = self.create_publisher(Int32, '/motor_speed', 10)
+
+        # Battery status subscriber
+        self.battery_sub = self.create_subscription(
+            BatteryStatus, '/battery_status', self.battery_callback, 10
+        )
+        self.conn_sub = self.create_subscription(
+            Bool, '/esp32_connected', self.conn_callback, 10
+        )
 
     def publish_joint_state(self, left_hip, left_knee, right_hip, right_knee):
         msg = JointState()
@@ -172,7 +200,32 @@ class JointStateNode(Node):
         msg.right_knee = float(right_knee)
 
         self.motor_pub.publish(msg)
+
+    def publish_reset_motors(self):
+        """Publish 'reset_motors' string on /motor_reset so serial_bridge_node
+        forwards it to the ESP32 over serial."""
+        msg = String()
+        msg.data = 'reset_motors'
+        self.reset_pub.publish(msg)
+        self.get_logger().info('[JointStateNode] reset_motors published on /motor_reset')
     
+    def publish_motor_speed(self, speed):
+        """Publish speed value on /motor_speed so serial_bridge_node
+        forwards it to the ESP32 over serial."""
+        msg = Int32()
+        msg.data = int(speed)
+        self.speed_pub.publish(msg)
+        self.get_logger().info(f'[JointStateNode] Speed {speed}% published on /motor_speed')
+    
+    def battery_callback(self, msg):
+        """Forward battery data to the GUI."""
+        if hasattr(self, 'gui'):
+            self.gui.on_battery_update(msg.percentage, msg.voltage)
+
+    def conn_callback(self, msg):
+        if hasattr(self, 'gui'):
+            self.gui.on_connection_update(msg.data)
+
     def motor_feedback(self, msg):
         if hasattr(self, 'gui'):
             self.gui.on_motor_feedback(
@@ -189,7 +242,21 @@ class JointStateNode(Node):
             self.start_hold_timer()
 
     # gait handling
-    def start_gait(self, gait_name, repeats, hold_time):
+    def execute_posture(self, posture_name):
+        self.get_logger().info(f"execute_posture({posture_name})")
+        self.stop_gait()
+        if posture_name not in self.poses:
+            self.get_logger().error(f"Unknown posture: {posture_name}")
+            return
+        pose = self.poses[posture_name]
+        left_hip = math.degrees(pose["left_hip_joint"])
+        left_knee = math.degrees(pose["left_knee_joint"])
+        right_hip = math.degrees(pose["right_hip_joint"])
+        right_knee = math.degrees(pose["right_knee_joint"])
+        self.publish_joint_state(left_hip, left_knee, right_hip, right_knee)
+        self.publish_motor_angles(left_hip, left_knee, right_hip, right_knee)
+
+    def start_gait(self, gait_name, repeats=5, hold_time=2.0):
         self.get_logger().info("start_gait()")
         self.current_gait = self.gaits[gait_name]
         self.current_step = 0
