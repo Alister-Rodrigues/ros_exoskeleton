@@ -13,7 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
     ],
-    install_requires=['setuptools', 'PyQt6'],
+    install_requires=['setuptools', 'PyQt5'],
     zip_safe=True,
     maintainer='alister',
     maintainer_email='alister@todo.todo',

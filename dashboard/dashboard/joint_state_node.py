@@ -92,32 +92,36 @@ class JointStateNode(Node):
         }
 
         self.gaits = {
-            "knee_bend": [
+            "stand_neutral": [
                 "stand_neutral",
+            ],
+
+            "knee_bend": [
+                # "stand_neutral",
                 "knee_bend",
                 "stand_neutral",
             ],
 
             "sit_like_bend": [
-                "stand_neutral",
+                # "stand_neutral",
                 "sitting",
                 "stand_neutral",
             ],
 
             "forward_lean": [
-                "stand_neutral",
+                # "stand_neutral",
                 "forward_lean",
                 "stand_neutral",
             ],
 
             "backward_lean": [
-                "stand_neutral",
+                # "stand_neutral",
                 "backward_lean",
                 "stand_neutral",
             ],
 
             "step_prepare": [
-                "stand_neutral",
+                # "stand_neutral",
                 "step_prepare_left",
                 "stand_neutral",
                 "step_prepare_right",
@@ -132,6 +136,7 @@ class JointStateNode(Node):
         self.running = False
 
         self.hold_timer = None
+        self.holding = False
 
         # pubsubs
         self.publisher = self.create_publisher(
@@ -237,9 +242,11 @@ class JointStateNode(Node):
         
         if not self.running:
             return
-        self.get_logger().info("Checking pose")
-        if self.pose_reached(msg):
-            self.start_hold_timer()
+        
+        if not self.holding:
+            self.get_logger().info("Checking pose")
+            if self.pose_reached(msg):
+                self.start_hold_timer()
 
     # gait handling
     def execute_posture(self, posture_name):
@@ -266,6 +273,7 @@ class JointStateNode(Node):
 
         self.hold_time = hold_time
         self.running = True
+        self.holding = False
 
         self.send_current_pose()
     
@@ -317,6 +325,7 @@ class JointStateNode(Node):
                 self.stop_gait()
                 return
         
+        self.holding = False
         self.send_current_pose()
             
     def stop_gait(self):

@@ -33,12 +33,12 @@ def generate_launch_description():
         #     package='joint_state_publisher_gui',
         #     executable='joint_state_publisher_gui'
         # ),
-        Node(
-            package="rviz2",
-            executable='rviz2',
-            arguments=[
-                "-d",
-                os.path.join(package_path, 'rviz', 'exoskeleton.rviz')
-            ]
-        )
+        # Node(
+        #     package="rviz2",
+        #     executable='rviz2',
+        #     arguments=[
+        #         "-d",
+        #         os.path.join(package_path, 'rviz', 'exoskeleton.rviz')
+        #     ]
+        # )
     ])

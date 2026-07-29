@@ -1,21 +1,29 @@
+from launch.actions import declare_launch_argument
+from launch.actions import declare_launch_argument
+from launch.actions import declare_launch_argument
 import math
 import rclpy
 import sys
+import subprocess
 import random
 import time
 from datetime import datetime
 # pyqt imports
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPointF
-from PyQt6.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QBrush, QConicalGradient
-from PyQt6.QtWidgets import (
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPointF
+from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QBrush, QConicalGradient
+from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFrame, QPushButton, QSizePolicy, QGraphicsDropShadowEffect, QStackedWidget,
     QSlider, QButtonGroup, QTextEdit, QScrollArea
 )
+from PyQt5.QtGui import QWindow
+from rviz_widget import RvizWidget
 # Node imports
 import rclpy
 from dashboard.joint_state_node import JointStateNode
-
+from std_msgs.msg import Float32
+from rclpy.node import Node
+import time
 # ----------------------------------------------------------------------
 # Palette (dark theme, shared across every page)
 # ----------------------------------------------------------------------
@@ -142,12 +150,12 @@ class SemiGauge(QWidget):
         p.setPen(QPen(QColor(TEXT)))
         f = QFont("Segoe UI", 18, QFont.Weight.Bold)
         p.setFont(f)
-        p.drawText(QRectF(0, cy - radius - 6, w, 30), Qt.AlignmentFlag.AlignCenter, f"{self.value}%")
+        p.drawText(QRectF(0, cy - radius - 6, w, 30), Qt.AlignCenter, f"{self.value}%")
 
         if self.subtitle:
             p.setPen(QPen(QColor(TEXT_MUTED)))
             p.setFont(QFont("Segoe UI", 9))
-            p.drawText(QRectF(0, cy - radius + 20, w, 20), Qt.AlignmentFlag.AlignCenter, self.subtitle)
+            p.drawText(QRectF(0, cy - radius + 20, w, 20), Qt.AlignCenter, self.subtitle)
 
 
 class Bar(QWidget):
@@ -436,11 +444,11 @@ class TitleBar(QFrame):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = e.globalPosition().toPoint() - self.window.frameGeometry().topLeft()
+            self._drag_pos = e.globalPos() - self.window.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, e):
         if self._drag_pos and e.buttons() & Qt.MouseButton.LeftButton:
-            self.window.move(e.globalPosition().toPoint() - self._drag_pos)
+            self.window.move(e.globalPos() - self._drag_pos)
 
 
 class StatCard(QFrame):
@@ -466,9 +474,13 @@ class StatCard(QFrame):
         col.addWidget(self.value_label)
 
         if sub:
-            sub_l = QLabel(sub)
-            sub_l.setStyleSheet(f"color:{TEXT_MUTED}; font-size:10.5px; border:none; background:transparent;")
-            col.addWidget(sub_l)
+            self.sub_label = QLabel(sub)
+            self.sub_label.setStyleSheet(
+                f"color:{TEXT_MUTED}; font-size:10.5px; border:none; background:transparent;"
+            )
+            col.addWidget(self.sub_label)
+        else:
+            self.sub_label = None
 
         lay.addLayout(col)
         lay.addStretch()
@@ -499,7 +511,7 @@ class ModeStatCard(QFrame):
 
         self.number = QLabel("-")
         self.number.setFixedWidth(28)
-        self.number.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.number.setAlignment(Qt.AlignCenter)
         self.lay.addWidget(self.number)
 
         col = QVBoxLayout()
@@ -593,7 +605,22 @@ class StatusStrip(QFrame):
         self.timer.timeout.connect(self._tick)
         self.timer.start(1000)
         self._tick()
+    def update_battery(self, voltage):
+        MIN_VOLTAGE = 10.0
+        MAX_VOLTAGE = 12.6
 
+        percentage = int(
+        max(0, min(100,
+            (voltage - MIN_VOLTAGE) /
+            (MAX_VOLTAGE - MIN_VOLTAGE) * 100))
+        )
+
+        self.battery_card.value_label.setText(
+        f"{percentage}% | {voltage:.2f} V"
+        )
+
+        if self.battery_card.sub_label:
+            self.battery_card.sub_label.setText("Battery Voltage")
     def set_third_card(self, mode="emg"):
         """Home page shows Connection instead of EMG Signal Quality."""
         if mode == "conn":
@@ -800,7 +827,7 @@ class HomePage(QWidget):
         lay.setSpacing(16)
 
         heading = QLabel("EMG-Controlled Humanoid Lower-Limb Exoskeleton")
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        heading.setAlignment(Qt.AlignCenter)
         heading.setStyleSheet(f"color:{TEXT}; font-size:22px; font-weight:800; border:none;")
         lay.addWidget(heading)
 
@@ -904,7 +931,7 @@ class HomePage(QWidget):
 
         b = QLabel(badge)
         b.setFixedWidth(70)
-        b.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        b.setAlignment(Qt.AlignCenter)
         b.setStyleSheet(f"background:{accent}; color:#0a0e21; font-weight:800; font-size:11px; padding:4px 0; border-radius:10px;")
         row = QHBoxLayout()
         row.addWidget(b)
@@ -912,17 +939,17 @@ class HomePage(QWidget):
         lay.addLayout(row)
 
         t = QLabel(title)
-        t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        t.setAlignment(Qt.AlignCenter)
         t.setStyleSheet(f"color:{accent}; font-size:15px; font-weight:700; border:none; background:transparent;")
         lay.addWidget(t)
 
         s = QLabel(subtitle)
-        s.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        s.setAlignment(Qt.AlignCenter)
         s.setStyleSheet(f"color:{TEXT}; font-size:12.5px; font-weight:700; border:none; background:transparent;")
         lay.addWidget(s)
 
         d = QLabel(desc)
-        d.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        d.setAlignment(Qt.AlignCenter)
         d.setWordWrap(True)
         d.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11.5px; border:none; background:transparent;")
         lay.addWidget(d)
@@ -959,7 +986,7 @@ class Mode1Page(QWidget):
         outer.setSpacing(14)
 
         title = QLabel("MODE 1 – EMG-DRIVEN CONTROL")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(f"color:{GREEN}; font-size:17px; font-weight:800; border:none;")
         outer.addWidget(title)
 
@@ -991,11 +1018,15 @@ class Mode1Page(QWidget):
         cl = QVBoxLayout(center)
         cl.setContentsMargins(10, 16, 10, 16)
         cl.addStretch()
-        leg = LegGraphic(hip_l=BLUE, knee_l=BLUE, hip_r=GREEN, knee_r=GREEN)
-        cl.addWidget(leg, alignment=Qt.AlignmentFlag.AlignCenter)
+        # leg = LegGraphic(hip_l=BLUE, knee_l=BLUE, hip_r=GREEN, knee_r=GREEN)
+        leg = RvizWidget()
+        leg.setFixedFrame("base_link")
+        leg.setRobotDescriptionTopic("/robot_description")
+        leg.setMinimumSize(450, 450)
+        cl.addWidget(leg, alignment=Qt.AlignCenter)
         cl.addStretch()
         mirror = QLabel("‹   MIRRORING MOVEMENT   ›")
-        mirror.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mirror.setAlignment(Qt.AlignCenter)
         mirror.setStyleSheet(f"color:{GREEN}; font-size:12.5px; font-weight:700; border:none; background:transparent;")
         cl.addWidget(mirror)
         row.addWidget(center, 5)
@@ -1134,11 +1165,11 @@ class PostureCard(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 6, 8, 6)
         icon = QLabel("🧍")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setAlignment(Qt.AlignCenter)
         icon.setStyleSheet("font-size:20px; border:none; background:transparent;")
         lay.addWidget(icon)
         lab = QLabel(label)
-        lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lab.setAlignment(Qt.AlignCenter)
         lab.setWordWrap(True)
         lab.setStyleSheet(f"color:{TEXT}; font-size:9.5px; font-weight:700; border:none; background:transparent;")
         lay.addWidget(lab)
@@ -1182,7 +1213,7 @@ class Mode2Page(QWidget):
         outer.setSpacing(14)
 
         title = QLabel("MODE 2 - PRE-PROGRAMMED POSTURE")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(f"color:{BLUE}; font-size:17px; font-weight:800; border:none;")
         outer.addWidget(title)
 
@@ -1239,25 +1270,32 @@ class Mode2Page(QWidget):
         cl.setContentsMargins(10, 16, 10, 10)
         cl.setSpacing(4)
         cur = QLabel("CURRENT POSTURE")
-        cur.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cur.setAlignment(Qt.AlignCenter)
         cur.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px; font-weight:600; border:none; background:transparent;")
         cl.addWidget(cur)
         self.posture_name = QLabel("KNEE BEND")
-        self.posture_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.posture_name.setAlignment(Qt.AlignCenter)
         self.posture_name.setStyleSheet(f"color:{BLUE}; font-size:19px; font-weight:800; border:none; background:transparent;")
         cl.addWidget(self.posture_name)
         cl.addStretch()
         legrow = QHBoxLayout()
         legrow.addStretch()
-        self.leg = LegGraphic(hip_l=BLUE, knee_l=BLUE, hip_r=BLUE, knee_r=BLUE)
+        # self.leg = LegGraphic(hip_l=BLUE, knee_l=BLUE, hip_r=BLUE, knee_r=BLUE)
+        self.leg = RvizWidget()
+        self.leg.setFixedFrame("base_link")
+        self.leg.setRobotDescriptionTopic("/robot_description")
+        self.leg.setMinimumSize(450, 450)
+        self.leg.setGridVisible(False)
+        self.leg.setBackgroundColor(QColor(BLUE))
+        self.leg.setRobotAlpha(0.5)
         legrow.addWidget(self.leg)
         angle_col = QVBoxLayout()
         angle_col.addStretch()
         al = QLabel("Knee Angle")
-        al.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        al.setAlignment(Qt.AlignCenter)
         al.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px; border:none; background:transparent;")
         self.knee_angle_val_label = QLabel("63°")
-        self.knee_angle_val_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.knee_angle_val_label.setAlignment(Qt.AlignCenter)
         self.knee_angle_val_label.setStyleSheet(f"color:{BLUE}; font-size:20px; font-weight:800; border:none; background:transparent;")
         angle_col.addWidget(al)
         angle_col.addWidget(self.knee_angle_val_label)
@@ -1309,7 +1347,7 @@ class Mode2Page(QWidget):
             l.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px; border:none; background:transparent;")
             v = QLabel(value)
             v.setWordWrap(True)
-            v.setAlignment(Qt.AlignmentFlag.AlignRight)
+            v.setAlignment(Qt.AlignRight)
             v.setStyleSheet(f"color:{color}; font-size:11px; font-weight:700; border:none; background:transparent;")
             r.addWidget(l)
             r.addStretch()
@@ -1343,7 +1381,7 @@ class Mode2Page(QWidget):
             r.addWidget(bar)
             v = QLabel(value)
             v.setFixedWidth(36)
-            v.setAlignment(Qt.AlignmentFlag.AlignRight)
+            v.setAlignment(Qt.AlignRight)
             v.setStyleSheet(f"color:{color}; font-size:11px; font-weight:700; border:none; background:transparent;")
             r.addWidget(v)
             jl.addLayout(r)
@@ -1441,11 +1479,6 @@ class Mode2Page(QWidget):
             self.main.start_gait(self.selected_gait)
 
     def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
-        self.leg.hip_angle_l = left_hip
-        self.leg.knee_angle_l = left_knee
-        self.leg.hip_angle_r = right_hip
-        self.leg.knee_angle_r = right_knee
-        self.leg.update()
         if hasattr(self, 'knee_angle_val_label'):
             self.knee_angle_val_label.setText(f"{int(abs(left_knee))}°")
         if hasattr(self, 'joint_overview_items') and len(self.joint_overview_items) == 4:
@@ -1456,12 +1489,7 @@ class Mode2Page(QWidget):
                 bar.update()
     
     def on_motor_feedback(self, left_hip, left_knee, right_hip, right_knee):
-        self.leg.hip_angle_l = left_hip
-        self.leg.knee_angle_l = left_knee
-        self.leg.hip_angle_r = right_hip
-        self.leg.knee_angle_r = right_knee
-
-        self.leg.update()
+        pass
     
     def stop_clicked(self):
         self.log_message('Motion stopped.', RED)
@@ -1497,7 +1525,7 @@ class SliderRow(QWidget):
             b.setStyleSheet(f"QPushButton {{ background:{CARD_BG_2}; color:{TEXT}; border:1px solid {BORDER}; border-radius:6px; }}")
         row.addWidget(minus)
 
-        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 100)
         self.slider.setValue(value)
         self.slider.setStyleSheet(
@@ -1561,11 +1589,11 @@ class Mode3Page(QWidget):
         outer.setSpacing(14)
 
         title = QLabel("MODE 3 – IMPEDANCE CONTROL (MANUAL)")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(f"color:{PURPLE}; font-size:17px; font-weight:800; border:none;")
         outer.addWidget(title)
         sub = QLabel("Assist / Resist Control")
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setAlignment(Qt.AlignCenter)
         sub.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11.5px; border:none;")
         outer.addWidget(sub)
 
@@ -1636,11 +1664,18 @@ class Mode3Page(QWidget):
         cl = QVBoxLayout(center)
         cl.setContentsMargins(10, 16, 10, 16)
         cl.addStretch()
-        self.leg = LegGraphic(hip_l=GREEN, knee_l=BLUE, hip_r=PURPLE, knee_r=ORANGE)
-        self.leg.hip_angle_l = 28
-        self.leg.knee_angle_l = -47
-        self.leg.hip_angle_r = 22
-        self.leg.knee_angle_r = -55
+        # self.leg = LegGraphic(hip_l=GREEN, knee_l=BLUE, hip_r=PURPLE, knee_r=ORANGE)
+        self.leg = RvizWidget()
+        self.leg.setFixedFrame("base_link")
+        self.leg.setRobotDescriptionTopic("/robot_description")
+        self.leg.setMinimumSize(450, 450)
+        self.leg.setGridVisible(False)
+        self.leg.setBackgroundColor(QColor(BLUE))
+        self.leg.setRobotAlpha(0.5)
+        self.hip_angle_l = 28
+        self.knee_angle_l = -47
+        self.hip_angle_r = 22
+        self.knee_angle_r = -55
         cl.addWidget(self.leg, alignment=Qt.AlignmentFlag.AlignCenter)
         cl.addStretch()
         row.addWidget(center, 4)
@@ -1807,18 +1842,17 @@ class Mode3Page(QWidget):
         self.main.publish_joint_state(0.0, 0.0, 0.0, 0.0)
 
     def update_robot(self):
-        self.leg.update()
         self.main.publish_joint_state(
-            self.leg.hip_angle_l,
-            self.leg.knee_angle_l,
-            self.leg.hip_angle_r,
-            self.leg.knee_angle_r,
+            self.hip_angle_l,
+            self.knee_angle_l,
+            self.hip_angle_r,
+            self.knee_angle_r,
         )
         self.main.publish_motor_angles(
-            self.leg.hip_angle_l,
-            self.leg.knee_angle_l,
-            self.leg.hip_angle_r,
-            self.leg.knee_angle_r,
+            self.hip_angle_l,
+            self.knee_angle_l,
+            self.hip_angle_r,
+            self.knee_angle_r,
         )
 
     def update_joint_ui(self, index, value):
@@ -1833,19 +1867,13 @@ class Mode3Page(QWidget):
         color = value_to_color(abs(value))
 
         if index == 0:
-            self.leg.hip_angle_l = value
-            self.leg.hip_l = color
+            self.hip_angle_l = value
         elif index == 1:
-            self.leg.knee_angle_l = value
-            self.leg.knee_l = color
+            self.knee_angle_l = value
         elif index == 2:
-            self.leg.hip_angle_r = value
-            self.leg.hip_r = color
+            self.hip_angle_r = value
         elif index == 3:
-            self.leg.knee_angle_r = value
-            self.leg.knee_r = color
-
-        self.leg.update()
+            self.knee_angle_r = value
 
         if hasattr(self, 'status_labels') and index < len(self.status_labels):
             self.status_labels[index]['angle'].setText(f"Angle: {int(value)}°")
@@ -1857,13 +1885,7 @@ class Mode3Page(QWidget):
     def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
         values = [left_hip, left_knee, right_hip, right_knee]
 
-        # Update sliders WITHOUT emitting valueChanged to avoid loops
-        for i, (slider_row, value) in enumerate(zip(self.sliders, values)):
-            slider_row.slider.blockSignals(True)
-            slider_row.slider.setValue(int(value))
-            slider_row.slider.blockSignals(False)
-            slider_row.value_label.setText(f"{int(value)}{slider_row.suffix}")
-            
+        for i, value in enumerate(values):
             # Sync the graphics, colors, and status panel values
             self.update_joint_ui(i, value)
 
@@ -1878,10 +1900,10 @@ class PlaceholderPage(QWidget):
         pl = QVBoxLayout(panel)
         pl.setContentsMargins(30, 60, 30, 60)
         t = QLabel(title)
-        t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        t.setAlignment(Qt.AlignCenter)
         t.setStyleSheet(f"color:{TEXT}; font-size:18px; font-weight:700; border:none;")
         sub = QLabel("This section is coming soon.")
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setAlignment(Qt.AlignCenter)
         sub.setStyleSheet(f"color:{TEXT_MUTED}; font-size:12.5px; border:none;")
         pl.addWidget(t)
         pl.addWidget(sub)
@@ -1904,13 +1926,12 @@ MODE_INFO = {
     5: dict(number=None, name="Not Selected", sub="", color=TEXT, bottom="Running diagnostics.", bottom_color=TEXT_MUTED, third="conn"),
 }
 
-
 class MainWindow(QWidget):
     def __init__(self, joint_node):
         super().__init__()
         self.ros = joint_node
 
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+        self.setWindowFlag(Qt.FramelessWindowHint)
         self.resize(1536, 1024)
         self.setStyleSheet(f"background:{BG};")
 
@@ -1968,7 +1989,12 @@ class MainWindow(QWidget):
         outer.addWidget(self.bottom_bar)
 
         self.go_to(0)
+    def update_battery(self, voltage):
+        self.status_strip.update_battery(voltage)
 
+    # Optional: update subtitle also
+        self.status_strip.battery_card.sub_label.setText("Battery Voltage")
+    
     def go_to(self, index):
         self.stack.setCurrentIndex(index)
         self.sidebar.select(index)
@@ -2057,7 +2083,7 @@ def main():
         lambda: rclpy.spin_once(ros_node, timeout_sec=0.0) if rclpy.ok() else None
     )
     ros_timer.start(10)
-    exit_code = app.exec()
+    exit_code = app.exec_()
 
     ros_node.destroy_node()
     rclpy.shutdown()
