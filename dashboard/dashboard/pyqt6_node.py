@@ -14,7 +14,7 @@ from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QBrush, QCo
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFrame, QPushButton, QSizePolicy, QGraphicsDropShadowEffect, QStackedWidget,
-    QSlider, QButtonGroup, QTextEdit, QScrollArea
+    QSlider, QButtonGroup, QTextEdit, QScrollArea, QSizeGrip
 )
 from PyQt5.QtGui import QWindow
 from rviz_widget import RvizWidget
@@ -437,10 +437,18 @@ class TitleBar(QFrame):
             lay.addWidget(btn)
 
     def _toggle_max(self):
-        if self.window.isMaximized():
-            self.window.showNormal()
+        if not hasattr(self, '_is_max'):
+            self._is_max = False
+            self._normal_rect = self.window.geometry()
+
+        if self._is_max:
+            self.window.setGeometry(self._normal_rect)
+            self._is_max = False
         else:
-            self.window.showMaximized()
+            self._normal_rect = self.window.geometry()
+            screen = QApplication.primaryScreen().availableGeometry()
+            self.window.setGeometry(screen)
+            self._is_max = True
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -650,7 +658,7 @@ class BottomBar(QFrame):
         self.setFixedHeight(36)
         self.setStyleSheet(f"background:{TOPBAR_BG}; border-top:1px solid {BORDER};")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(20, 0, 20, 0)
+        lay.setContentsMargins(20, 0, 0, 0)
 
         self.left = QLabel("System ready.")
         self.left.setStyleSheet(f"color:{TEXT_MUTED}; font-size:12px; background:transparent;")
@@ -665,6 +673,10 @@ class BottomBar(QFrame):
         right = QLabel("🔊 Audio Feedback: ON")
         right.setStyleSheet(f"color:{TEXT_MUTED}; font-size:12px; background:transparent;")
         lay.addWidget(right)
+        
+        lay.addSpacing(10)
+        self.size_grip = QSizeGrip(self)
+        lay.addWidget(self.size_grip, 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
 
     def set_message(self, text, color=TEXT_MUTED):
         self.left.setText(text)
@@ -1926,13 +1938,55 @@ MODE_INFO = {
     5: dict(number=None, name="Not Selected", sub="", color=TEXT, bottom="Running diagnostics.", bottom_color=TEXT_MUTED, third="conn"),
 }
 
+class EdgeResizer(QWidget):
+    def __init__(self, parent, edge):
+        super().__init__(parent)
+        self.edge = edge
+        self.parent_win = parent
+        if edge in ('top', 'bottom'):
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+        elif edge in ('left', 'right'):
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        self.setMouseTracking(True)
+        self._drag_pos = None
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = e.globalPos()
+
+    def mouseMoveEvent(self, e):
+        if self._drag_pos:
+            delta = e.globalPos() - self._drag_pos
+            rect = self.parent_win.geometry()
+            
+            if self.edge == 'left':
+                rect.setLeft(rect.left() + delta.x())
+            elif self.edge == 'right':
+                rect.setRight(rect.right() + delta.x())
+            elif self.edge == 'top':
+                rect.setTop(rect.top() + delta.y())
+            elif self.edge == 'bottom':
+                rect.setBottom(rect.bottom() + delta.y())
+
+            if rect.width() >= self.parent_win.minimumWidth() and rect.height() >= self.parent_win.minimumHeight():
+                self.parent_win.setGeometry(rect)
+                self._drag_pos = e.globalPos()
+
+    def mouseReleaseEvent(self, e):
+        self._drag_pos = None
+
 class MainWindow(QWidget):
     def __init__(self, joint_node):
         super().__init__()
         self.ros = joint_node
 
         self.setWindowFlag(Qt.FramelessWindowHint)
-        self.resize(1536, 1024)
+        
+        screen = QApplication.primaryScreen().availableGeometry()
+        w = int(screen.width() * 0.8)
+        h = int(screen.height() * 0.8)
+        self.resize(max(1024, w), max(768, h))
+        
         self.setStyleSheet(f"background:{BG};")
 
         outer = QVBoxLayout(self)
@@ -1971,7 +2025,14 @@ class MainWindow(QWidget):
         body.addWidget(content_wrap, 1)
 
         self.stack = QStackedWidget()
-        content_lay.addWidget(self.stack)
+        self.stack.setStyleSheet("background:transparent;")
+        
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self.stack)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        content_lay.addWidget(scroll_area)
 
         self.home_page = HomePage(self)
         self.home_page.request_nav.connect(self.go_to)
@@ -1987,6 +2048,13 @@ class MainWindow(QWidget):
 
         self.bottom_bar = BottomBar()
         outer.addWidget(self.bottom_bar)
+
+        self.resizers = {
+            'left': EdgeResizer(self, 'left'),
+            'right': EdgeResizer(self, 'right'),
+            'top': EdgeResizer(self, 'top'),
+            'bottom': EdgeResizer(self, 'bottom')
+        }
 
         self.go_to(0)
     def update_battery(self, voltage):
@@ -2065,6 +2133,18 @@ class MainWindow(QWidget):
 
     def stop_gait(self):
         self.ros.stop_gait()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'resizers'):
+            w, h = self.width(), self.height()
+            t = 8
+            self.resizers['left'].setGeometry(0, t, t, h - 2 * t)
+            self.resizers['right'].setGeometry(w - t, t, t, h - 2 * t)
+            self.resizers['top'].setGeometry(0, 0, w, t)
+            self.resizers['bottom'].setGeometry(0, h - t, w, t)
+            for resizer in self.resizers.values():
+                resizer.raise_()
 
 
 def main():
