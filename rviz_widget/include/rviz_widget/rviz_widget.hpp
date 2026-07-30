@@ -3,6 +3,9 @@
 
 #include <QWidget>
 #include <QColor>
+#include <QHideEvent>
+#include <QResizeEvent>
+#include <QTimer>
 #include <memory>
 
 #include <rviz_common/window_manager_interface.hpp>
@@ -43,6 +46,8 @@ public:
 
 protected:
     void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 public:
     QWidget *getParentWindow() override;
@@ -62,5 +67,6 @@ private:
     rviz_common::VisualizationManager *manager_{nullptr};
     rviz_common::Display *grid_display_{nullptr};
     rviz_common::Display *robot_display_{nullptr};
+    QTimer *resize_timer_{nullptr};
     void initializeRViz();
 };

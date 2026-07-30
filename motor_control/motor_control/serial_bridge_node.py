@@ -117,9 +117,14 @@ class SerialBridgeNode(Node):
         print('═' * 60 + '\n', flush=True)
 
         def publish_conn(status: bool):
-            msg = Bool()
-            msg.data = status
-            self.conn_pub.publish(msg)
+            if not rclpy.ok():
+                return
+            try:
+                msg = Bool()
+                msg.data = status
+                self.conn_pub.publish(msg)
+            except Exception:
+                pass
 
         while self._reader_running:
             if self._serial is None or not self._serial.is_open:
@@ -158,11 +163,18 @@ class SerialBridgeNode(Node):
                                 self.battery_pub.publish(bat_msg)
                             except Exception as e:
                                 self.get_logger().error(f"[SerialBridgeNode] Error parsing battery status: {e}")
-            except serial.SerialException as e:
+            except (serial.SerialException, TypeError, OSError) as e:
                 publish_conn(False)
-                self.get_logger().error(f'[SerialBridgeNode] Serial read error: {e}')
+                if rclpy.ok():
+                    try:
+                        self.get_logger().error(f'[SerialBridgeNode] Serial read error: {e}')
+                    except Exception:
+                        pass
                 if self._serial:
-                    self._serial.close()
+                    try:
+                        self._serial.close()
+                    except Exception:
+                        pass
                 self._serial = None
                 time.sleep(0.5)
             except Exception:
@@ -250,7 +262,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

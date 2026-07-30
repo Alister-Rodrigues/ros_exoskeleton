@@ -77,6 +77,36 @@ RED = "#ef4444"
 RED_BG = "#2a1417"
 CYAN = "#22d3ee"
 
+# ----------------------------------------------------------------------
+# DPI-aware scaling
+# SCALE is computed once at import time.  px(n) converts a "baseline 1080p"
+# pixel value to the correct size for the current screen.
+# Baseline: 96 logical DPI  (standard 1080p monitor at 100% scaling)
+# ----------------------------------------------------------------------
+def _compute_scale() -> float:
+    """Return a float scale factor relative to 96 DPI baseline."""
+    try:
+        from PyQt5.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            # QApplication not yet created – use environment variable hint
+            import os
+            factor = float(os.environ.get("QT_SCALE_FACTOR", "1.0"))
+            return max(0.5, min(3.0, factor))
+        screen = app.primaryScreen()
+        dpi = screen.logicalDotsPerInch()   # honours OS display scaling
+        return max(0.75, min(3.0, dpi / 96.0))
+    except Exception:
+        return 1.0
+
+# Global scale factor – widgets call px() to convert baseline pixel values
+SCALE: float = 1.0   # will be updated in main() once QApplication exists
+
+def px(value: int) -> int:
+    """Scale a baseline-96-DPI pixel value to the current screen DPI."""
+    return max(1, int(round(value * SCALE)))
+
+
 
 def shadow(blur=22, y=4, alpha=90):
     eff = QGraphicsDropShadowEffect()
@@ -772,6 +802,7 @@ class NavButton(QPushButton):
 
 class Sidebar(QFrame):
     navigate = pyqtSignal(int)
+    voice_toggled = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
@@ -810,24 +841,43 @@ class Sidebar(QFrame):
 
         lay.addStretch()
 
-        voice = QFrame()
-        voice.setStyleSheet(f"background:{CARD_BG_2}; border:1px solid {BORDER}; border-radius:10px; margin:0 14px;")
-        v_lay = QHBoxLayout(voice)
+        self.voice_enabled = True
+        self.voice_frame = QFrame()
+        self.voice_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.voice_frame.setStyleSheet(f"QFrame {{ background:{CARD_BG_2}; border:1px solid {BORDER}; border-radius:10px; margin:0 14px; }}")
+        v_lay = QHBoxLayout(self.voice_frame)
         v_lay.setContentsMargins(12, 10, 12, 10)
-        icon = QLabel("🔊")
-        icon.setStyleSheet("font-size:14px; background:transparent; border:none;")
-        v_lay.addWidget(icon)
+        self.voice_icon = QLabel("🔊")
+        self.voice_icon.setStyleSheet("font-size:14px; background:transparent; border:none;")
+        v_lay.addWidget(self.voice_icon)
         col = QVBoxLayout()
         col.setSpacing(0)
         t = QLabel("VOICE FEEDBACK")
         t.setStyleSheet(f"color:{TEXT}; font-size:10.5px; font-weight:700; background:transparent; border:none;")
-        s = QLabel("ⓘ ON")
-        s.setStyleSheet(f"color:{GREEN}; font-size:10.5px; font-weight:600; background:transparent; border:none;")
+        self.voice_status = QLabel("ⓘ ON")
+        self.voice_status.setStyleSheet(f"color:{GREEN}; font-size:10.5px; font-weight:600; background:transparent; border:none;")
         col.addWidget(t)
-        col.addWidget(s)
+        col.addWidget(self.voice_status)
         v_lay.addLayout(col)
         v_lay.addStretch()
-        lay.addWidget(voice)
+        
+        def on_voice_click(e):
+            if e.button() == Qt.MouseButton.LeftButton:
+                self._toggle_voice()
+        self.voice_frame.mousePressEvent = on_voice_click
+        lay.addWidget(self.voice_frame)
+
+    def _toggle_voice(self):
+        self.voice_enabled = not self.voice_enabled
+        if self.voice_enabled:
+            self.voice_icon.setText("🔊")
+            self.voice_status.setText("ⓘ ON")
+            self.voice_status.setStyleSheet(f"color:{GREEN}; font-size:10.5px; font-weight:600; background:transparent; border:none;")
+        else:
+            self.voice_icon.setText("🔇")
+            self.voice_status.setText("ⓘ OFF")
+            self.voice_status.setStyleSheet(f"color:{TEXT_MUTED}; font-size:10.5px; font-weight:600; background:transparent; border:none;")
+        self.voice_toggled.emit(self.voice_enabled)
 
     def select(self, index):
         self.buttons[index].setChecked(True)
@@ -1743,8 +1793,9 @@ class Mode3Page(QWidget):
             cml.addWidget(l)
             cml.addWidget(v)
         self.speed_slider = SliderRow("Speed Level", 10, PURPLE, "%")
+        self.speed_slider.set_range(0, 100, "%")
+        self.speed_slider.slider.valueChanged.connect(self._on_slider_changed)
         cml.addWidget(self.speed_slider)
-        mv_row = QHBoxLayout()
         mv_l = QLabel("Movement Status")
         mv_l.setStyleSheet(f"color:{TEXT_MUTED}; font-size:10.5px; border:none; background:transparent; margin-top:6px;")
         cml.addWidget(mv_l)
@@ -1848,16 +1899,15 @@ class Mode3Page(QWidget):
         quick = card_frame()
         ql = QVBoxLayout(quick)
         ql.setContentsMargins(14, 12, 14, 12)
-        ql.addWidget(section_title("EXECUTION CONTROLS", TEXT_MUTED))
+        ql.addWidget(section_title("LIVE CONTROL", TEXT_MUTED))
+        live_ind = QLabel("⚡  Live — Motors update in real-time")
+        live_ind.setStyleSheet(f"color:{GREEN}; font-size:11px; font-weight:700; border:none; background:transparent; margin-bottom:6px;")
+        ql.addWidget(live_ind)
         qrow = QHBoxLayout()
         home_b = QPushButton("⌂ Home Position")
-        exec_b = QPushButton("▶ Execute")
-        home_b.setStyleSheet(f"QPushButton {{ background:{BLUE_BG}; color:{BLUE}; border:1px solid {BLUE}55; border-radius:8px; padding:6px; font-weight:600; font-size:10.5px; }}")
-        exec_b.setStyleSheet(f"QPushButton {{ background:{GREEN_BG}; color:{GREEN}; border:1px solid {GREEN}55; border-radius:8px; padding:6px; font-weight:600; font-size:10.5px; }}")
-        for b in (home_b, exec_b):
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            qrow.addWidget(b)
-        exec_b.clicked.connect(self._execute_clicked)
+        home_b.setStyleSheet(f"QPushButton {{ background:{BLUE_BG}; color:{BLUE}; border:1px solid {BLUE}55; border-radius:8px; padding:8px 12px; font-weight:600; font-size:11px; }}")
+        home_b.setCursor(Qt.CursorShape.PointingHandCursor)
+        qrow.addWidget(home_b)
         home_b.clicked.connect(self._home_position_clicked)
         ql.addLayout(qrow)
         bottom_row.addWidget(quick, 3)
@@ -1868,12 +1918,26 @@ class Mode3Page(QWidget):
         self.timer.timeout.connect(lambda: self.rt_spark.tick())
         self.timer.start(600)
 
+        # Debounce timer: waits 100 ms after the last slider move before
+        # sending a motor command — prevents flooding the ESP32 with rapid
+        # commands that cause motor vibration/shaking.
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(100)  # ms
+        self._debounce_timer.timeout.connect(self._send_debounced_command)
+
     # ── Mode 3 Quick Action Handlers ─────────────────────────────────────────
 
-    def _execute_clicked(self):
-        """Send speed then joint angles to motors."""
-        speed_val = self.speed_slider.slider.value()
-        self.main.publish_motor_speed(speed_val)
+    # _execute_clicked removed: Mode 3 is now fully live (no execute button needed)
+
+    def _on_slider_changed(self):
+        """Called on any slider valueChanged. Restarts the debounce timer."""
+        self._debounce_timer.start()  # restart — previous countdown is cancelled
+
+    def _send_debounced_command(self):
+        """Fires once, 100 ms after the last slider activity. Sends one clean command."""
+        if hasattr(self.main, 'publish_motor_speed'):
+            self.main.publish_motor_speed(self.speed_slider.slider.value())
         self.update_robot()
 
     def _home_position_clicked(self):
@@ -1922,12 +1986,28 @@ class Mode3Page(QWidget):
                 f"color:{color}; font-size:13px; font-weight:800; border:none; background:transparent;"
             )
 
-    def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
-        values = [left_hip, left_knee, right_hip, right_knee]
+        # Restart debounce — motor command fires 100ms after last slider move
+        if hasattr(self, '_debounce_timer'):
+            self._debounce_timer.start()
 
+    def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
+        """Update UI from external feedback (does NOT trigger debounce/motor publish)."""
+        values = [left_hip, left_knee, right_hip, right_knee]
+        # Store angles and update labels without triggering the debounce
+        colors = [GREEN, BLUE, PURPLE, ORANGE]
         for i, value in enumerate(values):
-            # Sync the graphics, colors, and status panel values
-            self.update_joint_ui(i, value)
+            if i == 0:
+                self.hip_angle_l = value
+            elif i == 1:
+                self.knee_angle_l = value
+            elif i == 2:
+                self.hip_angle_r = value
+            elif i == 3:
+                self.knee_angle_r = value
+            if hasattr(self, 'status_labels') and i < len(self.status_labels):
+                self.status_labels[i]['angle'].setText(f"Angle: {int(value)}°")
+                pct = int(abs(value) / 90 * 100)
+                self.status_labels[i]['pct'].setText(f"{pct}%")
 
 
 
@@ -2044,7 +2124,13 @@ class MainWindow(QWidget):
 
         self.sidebar = Sidebar()
         self.sidebar.navigate.connect(self.go_to)
+        self.sidebar.voice_toggled.connect(self.set_voice_enabled)
         body.addWidget(self.sidebar)
+
+        self.voice_enabled = True
+        self._last_battery_pct = None
+        self._last_conn_state = True
+        self._announced_offline = False
 
         content_wrap = QWidget()
         content_wrap.setStyleSheet(f"background:{BG};")
@@ -2095,6 +2181,19 @@ class MainWindow(QWidget):
             self.voice_worker.stop()
             self.voice_worker.wait()
         super().closeEvent(event)
+
+    def set_voice_enabled(self, enabled):
+        self.voice_enabled = enabled
+        if enabled:
+            self.speak("Voice assistance enabled.")
+        else:
+            if hasattr(self, 'voice_worker'):
+                self.voice_worker.say("Voice assistance disabled.")
+
+    def speak(self, text):
+        if self.voice_enabled and hasattr(self, 'voice_worker'):
+            self.voice_worker.say(text)
+
     def update_battery(self, voltage):
         self.status_strip.update_battery(voltage)
 
@@ -2134,13 +2233,27 @@ class MainWindow(QWidget):
         # Update BatteryStatCard in the StatusStrip
         self.status_strip.battery_card.update_battery(pct, volt)
 
+        current_pct = int(pct)
+        if self._last_battery_pct is not None and current_pct != self._last_battery_pct:
+            # Announce when percentage actually drops/changes
+            self.speak(f"Battery at {current_pct} percent.")
+        self._last_battery_pct = current_pct
+
     def on_connection_update(self, connected: bool):
         if connected:
             self._last_conn_time = time.time()
+            if not self._last_conn_state:
+                self.speak("ESP32 connected.")
+            self._last_conn_state = True
+            self._announced_offline = False
         self.status_strip.update_system_status(connected)
 
     def _check_conn_timeout(self):
         if time.time() - self._last_conn_time > 2.0:
+            if self._last_conn_state and not self._announced_offline:
+                self.speak("ESP32 is offline.")
+                self._announced_offline = True
+                self._last_conn_state = False
             self.status_strip.update_system_status(False)
 
     def on_joint_state(self, left_hip, left_knee, right_hip, right_knee):
@@ -2190,8 +2303,31 @@ class MainWindow(QWidget):
 
 
 def main():
+    # ── HiDPI / multi-resolution setup ────────────────────────────────────
+    # Enable Qt's own high-DPI scaling BEFORE creating QApplication.
+    # This tells Qt to honour the OS display scale factor (e.g. 150% on 2K).
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
     app = QApplication(sys.argv)
-    app.setFont(QFont("Segoe UI", 10))
+
+    # ── Compute global scale factor now that QApplication exists ──────────
+    global SCALE
+    SCALE = _compute_scale()
+
+    # Base font size scales with DPI: 10pt at 96 DPI, 13pt at 144 DPI, etc.
+    base_font_pt = max(8, min(16, int(round(10 * SCALE))))
+    app.setFont(QFont("Segoe UI", base_font_pt))
+
+    # Log the detected configuration so the team can debug scaling issues
+    screen = app.primaryScreen()
+    res = screen.size()
+    dpi = screen.logicalDotsPerInch()
+    print(
+        f"[Dashboard] Screen: {res.width()}x{res.height()}  "
+        f"LogicalDPI: {dpi:.0f}  ScaleFactor: {SCALE:.2f}  "
+        f"FontSize: {base_font_pt}pt"
+    )
 
     rclpy.init()
     ros_node = JointStateNode()
@@ -2199,7 +2335,7 @@ def main():
     win = MainWindow(ros_node)
     ros_node.gui = win
     win.show()
-    
+
     ros_timer = QTimer()
     ros_timer.timeout.connect(
         lambda: rclpy.spin_once(ros_node, timeout_sec=0.0) if rclpy.ok() else None

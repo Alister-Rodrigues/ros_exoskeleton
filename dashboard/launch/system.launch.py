@@ -1,11 +1,22 @@
 import os
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
+
+# ── PYTHONPATH: inject rviz_widget shared library so the dashboard can import it ──
+_RVIZ_WIDGET_LIB = (
+    '/home/shijaz/Documents/exo_ws/src/rviz_widget/build/rviz_widget/'
+    'build/lib.linux-x86_64-cpython-312'
+)
+_PYTHONPATH = ':'.join(filter(None, [_RVIZ_WIDGET_LIB, os.environ.get('PYTHONPATH', '')]))
 
 
 def generate_launch_description():
@@ -41,7 +52,29 @@ def generate_launch_description():
         package='dashboard',
         executable='pyqt6_node',
         name='pyqt6_dashboard',
-        output='screen'
+        output='screen',
+        additional_env={
+            # ── Suppress rviz_common debug icon-not-found spam ──────────────────
+            # rviz_common tries .svg then .png fallbacks for nav2 plugin icons
+            # that are not installed in ROS Jazzy.  These are harmless debug
+            # messages; raising the minimum severity to WARN hides them while
+            # keeping genuine warnings and errors visible.
+            'RCUTILS_LOGGING_MIN_SEVERITY':   'WARN',
+            # ── Anti-flicker: sync OGRE buffer swaps to monitor refresh ──────
+            # Mesa / AMD / Intel: force adaptive VSync (mode 3)
+            'vblank_mode':                '3',
+            # Mesa: use FBO for render-to-texture (more stable than pbuffer)
+            'MESA_GLSL_CACHE_DISABLE':    '0',
+            # NVIDIA proprietary: force VSync on
+            '__GL_SYNC_TO_VBLANK':        '1',
+            '__GL_YIELD':                 'USLEEP',
+            # Use desktop (native) OpenGL — not ANGLE or software fallback.
+            # This ensures OGRE and Qt share the same GL context path.
+            'QT_OPENGL':                  'desktop',
+            # Disable X11 MIT-SHM shared memory — can interfere with
+            # embedded OpenGL sub-windows causing X11 BadMatch flicker.
+            'QT_X11_NO_MITSHM':           '1',
+        },
     )
 
     # 2. Battery Status Telemetry Node ────────────────────────────────────────
@@ -80,6 +113,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        # Set PYTHONPATH first so every spawned node inherits it
+        SetEnvironmentVariable('PYTHONPATH', _PYTHONPATH),
         serial_port_arg,
         baud_rate_arg,
         use_serial_arg,

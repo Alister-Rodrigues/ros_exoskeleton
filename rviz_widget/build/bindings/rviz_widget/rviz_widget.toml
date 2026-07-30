@@ -1,6 +1,6 @@
 # Automatically generated configuration for rviz_widget.
 
-sip-version = "6.8.3"
+sip-version = "6.15.3"
 sip-abi-version = "12.13"
 module-tags = ["Qt_5_15_13", "WS_X11"]
 module-disabled-features = []
