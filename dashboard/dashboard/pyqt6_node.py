@@ -2186,9 +2186,6 @@ class MainWindow(QWidget):
         self.voice_enabled = enabled
         if enabled:
             self.speak("Voice assistance enabled.")
-        else:
-            if hasattr(self, 'voice_worker'):
-                self.voice_worker.say("Voice assistance disabled.")
 
     def speak(self, text):
         if self.voice_enabled and hasattr(self, 'voice_worker'):
@@ -2207,8 +2204,8 @@ class MainWindow(QWidget):
         self.status_strip.mode_card.set_mode(info["number"], info["name"], info["sub"], info["color"])
         self.status_strip.set_third_card(info["third"])
         self.bottom_bar.set_message(info["bottom"], info["bottom_color"])
-        if hasattr(self, 'voice_worker') and info["name"]:
-            self.voice_worker.say(f"{info['name']} activated.")
+        if info["name"]:
+            self.speak(f"{info['name']} activated.")
     
     def publish_joint_state(self, left_hip, left_knee, right_hip, right_knee):
         self.ros.publish_joint_state(left_hip, left_knee, right_hip, right_knee)
@@ -2221,8 +2218,7 @@ class MainWindow(QWidget):
 
     def reset_motors(self):
         """Publish reset_motors command on /motor_reset topic."""
-        if hasattr(self, 'voice_worker'):
-            self.voice_worker.say("Calibrating motors. Please stand clear.")
+        self.speak("Calibrating motors. Please stand clear.")
         self.ros.publish_reset_motors()
         self.bottom_bar.set_message(">> System Calibration: reset_motors command sent to ESP32.", ORANGE)
         if hasattr(self.mode2_page, 'log_message'):
