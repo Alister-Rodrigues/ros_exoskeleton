@@ -12,6 +12,14 @@ class MotorNode(Node):
         self.subscriber = self.create_subscription(
             MotorAngles, 'motor_commands', self.command_callback, 10
         )
+        
+        # Track current and target angles for simulated smooth movement
+        self.current_angles = {'left_hip': 0.0, 'left_knee': 0.0, 'right_hip': 0.0, 'right_knee': 0.0}
+        self.target_angles = {'left_hip': 0.0, 'left_knee': 0.0, 'right_hip': 0.0, 'right_knee': 0.0}
+        self.step_size = 2.0  # degrees per tick
+        
+        # Publish feedback at 20Hz (every 50ms)
+        self.timer = self.create_timer(0.05, self.timer_callback)
     
     def publish_motor_angles(self, left_hip, left_knee, right_hip, right_knee):
         self.get_logger().info('test-pub')
@@ -21,7 +29,8 @@ class MotorNode(Node):
         msg.right_hip = right_hip
         msg.right_knee = right_knee
 
-        self.publisher.publish(msg)
+        if hasattr(self, 'publisher'):
+            self.publisher.publish(msg)
     
     def feedback_callback(self, msg):
         self.get_logger().info('test-sub')
@@ -32,16 +41,30 @@ class MotorNode(Node):
                 msg.right_hip,
                 msg.right_knee,
             )
+            
     def command_callback(self, msg):
-        self.get_logger().info("Received command")
+        self.get_logger().info(f"Received command target: LH={msg.left_hip}, LK={msg.left_knee}, RH={msg.right_hip}, RK={msg.right_knee}")
+        self.target_angles['left_hip'] = msg.left_hip
+        self.target_angles['left_knee'] = msg.left_knee
+        self.target_angles['right_hip'] = msg.right_hip
+        self.target_angles['right_knee'] = msg.right_knee
 
+    def timer_callback(self):
+        # Interpolate current angles towards target angles
+        for joint in self.current_angles:
+            diff = self.target_angles[joint] - self.current_angles[joint]
+            if abs(diff) > self.step_size:
+                self.current_angles[joint] += self.step_size if diff > 0 else -self.step_size
+            else:
+                self.current_angles[joint] = self.target_angles[joint]
+                
+        # Publish the simulated live position
         feedback = MotorAngles()
-
-        feedback.left_hip = msg.left_hip
-        feedback.left_knee = msg.left_knee
-        feedback.right_hip = msg.right_hip
-        feedback.right_knee = msg.right_knee
-
+        feedback.left_hip = self.current_angles['left_hip']
+        feedback.left_knee = self.current_angles['left_knee']
+        feedback.right_hip = self.current_angles['right_hip']
+        feedback.right_knee = self.current_angles['right_knee']
+        
         self.feedback_pub.publish(feedback)
         
 def main(args=None):

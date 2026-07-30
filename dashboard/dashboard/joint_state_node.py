@@ -239,6 +239,14 @@ class JointStateNode(Node):
                 msg.right_hip,
                 msg.right_knee,
             )
+            
+        # Update RViz with the actual live motor positions
+        self.publish_joint_state(
+            msg.left_hip,
+            msg.left_knee,
+            msg.right_hip,
+            msg.right_knee
+        )
         
         if not self.running:
             return
@@ -261,16 +269,17 @@ class JointStateNode(Node):
         left_knee = math.degrees(pose["left_knee_joint"])
         right_hip = math.degrees(pose["right_hip_joint"])
         right_knee = math.degrees(pose["right_knee_joint"])
-        self.publish_joint_state(left_hip, left_knee, right_hip, right_knee)
+        
         self.publish_motor_angles(left_hip, left_knee, right_hip, right_knee)
 
-    def start_gait(self, gait_name, repeats=5, hold_time=2.0):
-        self.get_logger().info("start_gait()")
+    def start_gait(self, gait_name, repeats=-1, hold_time=2.0):
+        """Start a gait loop.  repeats=-1 means loop forever until stop_gait()."""
+        self.get_logger().info(f"start_gait({gait_name}, repeats={repeats})")
         self.current_gait = self.gaits[gait_name]
         self.current_step = 0
-        
+
         self.current_repeat = 0
-        self.total_repeats = repeats
+        self.total_repeats = repeats  # -1 = infinite
 
         self.hold_time = hold_time
         self.running = True
@@ -282,12 +291,6 @@ class JointStateNode(Node):
         pose_name = self.current_gait[self.current_step]
         pose = self.poses[pose_name]
 
-        self.publish_joint_state(
-            math.degrees(pose["left_hip_joint"]),
-            math.degrees(pose["left_knee_joint"]),
-            math.degrees(pose["right_hip_joint"]),
-            math.degrees(pose["right_knee_joint"]),
-        )
         self.publish_motor_angles(
             math.degrees(pose["left_hip_joint"]),
             math.degrees(pose["left_knee_joint"]),
@@ -296,14 +299,16 @@ class JointStateNode(Node):
         )
     
     def pose_reached(self, msg):
+        """Check if the two physical motors (M1=left_hip, M2=left_knee) have
+        reached the current target pose.  right_hip / right_knee are not
+        physical motors on this device, so their feedback is always 0 and
+        must NOT be included in the check."""
         pose_name = self.current_gait[self.current_step]
         target = self.poses[pose_name]
-        tolerance = 2.0
+        tolerance = 3.0   # slightly above the ESP32's natural ±2° error margin
         return (
-            abs(msg.left_hip - math.degrees(target["left_hip_joint"])) < tolerance and
-            abs(msg.left_knee - math.degrees(target["left_knee_joint"])) < tolerance and
-            abs(msg.right_hip - math.degrees(target["right_hip_joint"])) < tolerance and
-            abs(msg.right_knee - math.degrees(target["right_knee_joint"])) < tolerance
+            abs(msg.left_hip  - math.degrees(target["left_hip_joint"]))  < tolerance and
+            abs(msg.left_knee - math.degrees(target["left_knee_joint"])) < tolerance
         )
     
     def start_hold_timer(self):
@@ -322,10 +327,14 @@ class JointStateNode(Node):
             self.current_step = 0
             self.current_repeat += 1
 
-            if self.current_repeat >= self.total_repeats:
+            # -1 means infinite loop — only stop when stop_gait() is called
+            if self.total_repeats != -1 and self.current_repeat >= self.total_repeats:
                 self.stop_gait()
                 return
-        
+
+        if not self.running:   # guard: stop_gait() may have been called while timer was pending
+            return
+
         self.holding = False
         self.send_current_pose()
             

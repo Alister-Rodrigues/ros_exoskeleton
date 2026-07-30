@@ -1562,10 +1562,13 @@ class Mode2Page(QWidget):
             self.main.publish_motor_speed(speed_val)
 
         display = self.selected_gait.replace('_', ' ').upper()
-        self.log_message(f"Executing posture: {display} (Speed: {speed_val}%) — sending angles to M1 & M2...", BLUE)
-        self.log_message(hasattr(self.main, 'execute_posture'))
+        self.log_message(
+            f"▶  LOOP START: {display} @ {speed_val}% — cycling pose ↔ home until STOP.",
+            BLUE
+        )
         if hasattr(self.main, 'start_gait'):
-            self.main.start_gait(self.selected_gait)
+            # repeats=-1 → loop forever until stop_gait() is called
+            self.main.start_gait(self.selected_gait, repeats=-1)
 
     def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
         if hasattr(self, 'knee_angle_val_label'):
@@ -1581,7 +1584,7 @@ class Mode2Page(QWidget):
         pass
     
     def stop_clicked(self):
-        self.log_message('Motion stopped.', RED)
+        self.log_message('■  STOP pressed — motion halted.', RED)
         self.main.stop_gait()
 
     def home_position_clicked(self):
@@ -1659,9 +1662,13 @@ class SliderRow(QWidget):
             self.scale_labels[1].setText(f"{mid_v}{self.suffix}")
             self.scale_labels[2].setText(f"{max_v}{self.suffix}")
 
-    def set_range(self, min_v, max_v, suffix="°"):
+    def set_range(self, min_v, max_v, suffix="°", initial=None):
+        """Set slider range. If initial is given, move the handle there;
+        otherwise keep the current value (clamped to the new range by Qt)."""
         self.suffix = suffix
         self.slider.setRange(min_v, max_v)
+        if initial is not None:
+            self.slider.setValue(initial)
         self.update_scale_labels()
         self.value_label.setText(f"{self.slider.value()}{self.suffix}")
 
@@ -1828,26 +1835,28 @@ class Mode3Page(QWidget):
             sliders_row.addWidget(s)
             self.sliders.append(s)
 
-        # Left Hip
-        self.sliders[0].set_range(0, 90, "°")
+        # Left Hip — range 0..90, start at 28°
+        self.sliders[0].set_range(0, 90, "°", initial=28)
         self.sliders[0].slider.valueChanged.connect(
             lambda v: self.update_joint_ui(0, v)
         )
 
-        # Left Knee
-        self.sliders[1].set_range(-90, 0, "°")
+        # Left Knee — range -90..0, start at -47°
+        # NOTE: must pass initial= here because Qt clamps the value=-47
+        # set during SliderRow.__init__ (which used range 0-100) to 0.
+        self.sliders[1].set_range(-90, 0, "°", initial=-47)
         self.sliders[1].slider.valueChanged.connect(
             lambda v: self.update_joint_ui(1, v)
         )
 
-        # Right Hip
-        self.sliders[2].set_range(0, 90, "°")
+        # Right Hip — range 0..90, start at 22°
+        self.sliders[2].set_range(0, 90, "°", initial=22)
         self.sliders[2].slider.valueChanged.connect(
             lambda v: self.update_joint_ui(2, v)
         )
 
-        # Right Knee
-        self.sliders[3].set_range(-90, 0, "°")
+        # Right Knee — range -90..0, start at -55°
+        self.sliders[3].set_range(-90, 0, "°", initial=-55)
         self.sliders[3].slider.valueChanged.connect(
             lambda v: self.update_joint_ui(3, v)
         )
@@ -1991,19 +2000,16 @@ class Mode3Page(QWidget):
             self._debounce_timer.start()
 
     def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
-        """Update UI from external feedback (does NOT trigger debounce/motor publish)."""
+        """Update status display labels from external feedback.
+        
+        In Mode 3, the joint angles are slider-controlled, so we must NOT
+        overwrite self.hip/knee_angle_* here — doing so would cause the
+        motor_feedback loop (running at 20Hz) to fight the slider and prevent
+        the debounce timer from ever sending the correct target position.
+        We only update the informational status labels on the left panel.
+        """
         values = [left_hip, left_knee, right_hip, right_knee]
-        # Store angles and update labels without triggering the debounce
-        colors = [GREEN, BLUE, PURPLE, ORANGE]
         for i, value in enumerate(values):
-            if i == 0:
-                self.hip_angle_l = value
-            elif i == 1:
-                self.knee_angle_l = value
-            elif i == 2:
-                self.hip_angle_r = value
-            elif i == 3:
-                self.knee_angle_r = value
             if hasattr(self, 'status_labels') and i < len(self.status_labels):
                 self.status_labels[i]['angle'].setText(f"Angle: {int(value)}°")
                 pct = int(abs(value) / 90 * 100)

@@ -15,11 +15,12 @@ from the ESP32 directly to the terminal.
 NO changes are made to the ESP32 firmware.
 """
 
+import re
+
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, Int32
-from exoskeleton_interfaces.msg import MotorAngles, BatteryStatus
 from std_msgs.msg import String, Int32, Bool
+from exoskeleton_interfaces.msg import MotorAngles, BatteryStatus
 
 import serial
 import threading
@@ -70,6 +71,7 @@ class SerialBridgeNode(Node):
 
         self.conn_pub = self.create_publisher(Bool, '/esp32_connected', 10)
         self.battery_pub = self.create_publisher(BatteryStatus, '/battery_status', 10)
+        self.feedback_pub = self.create_publisher(MotorAngles, '/motor_feedback', 10)
         self._last_conn_status = None
 
         self.create_subscription(
@@ -149,6 +151,22 @@ class SerialBridgeNode(Node):
                     line = raw.decode('utf-8', errors='replace').strip()
                     if line:
                         print(f'[ESP32] {line}', flush=True)
+                        # ── Parse actual motor positions from [RUN] lines ────────
+                        # Format: [RUN] Spd:10% M1 Tgt:80.2° Act:16.7° Err:95 [..] | M2 Tgt:-74.5° Act:-20.1° Err:-81 [..]
+                        if '[RUN]' in line:
+                            try:
+                                m1_act = re.search(r'M1 Tgt:[-\d.]+.? Act:([-\d.]+)', line)
+                                m2_act = re.search(r'M2 Tgt:[-\d.]+.? Act:([-\d.]+)', line)
+                                if m1_act and m2_act and rclpy.ok():
+                                    fb_msg = MotorAngles()
+                                    fb_msg.left_hip   = float(m1_act.group(1))
+                                    fb_msg.left_knee  = float(m2_act.group(1))
+                                    fb_msg.right_hip  = 0.0   # right leg not wired yet
+                                    fb_msg.right_knee = 0.0
+                                    self.feedback_pub.publish(fb_msg)
+                            except Exception as e:
+                                pass  # Don't spam logs on every line
+                        # ── Battery telemetry ────────────────────────────────────
                         if "Battery Voltage" in line and "Battery :" in line:
                             try:
                                 # Format: "Battery Voltage : 12.55 V    Battery : 98 %"
