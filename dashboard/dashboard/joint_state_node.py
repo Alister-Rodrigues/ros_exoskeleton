@@ -246,6 +246,7 @@ class JointStateNode(Node):
         if not self.holding:
             self.get_logger().info("Checking pose")
             if self.pose_reached(msg):
+                self.holding = True
                 self.start_hold_timer()
 
     # gait handling

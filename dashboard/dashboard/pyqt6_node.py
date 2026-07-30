@@ -8,8 +8,10 @@ import subprocess
 import random
 import time
 from datetime import datetime
+import pyttsx3
+from queue import Queue
 # pyqt imports
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPointF
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPointF, QThread
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QBrush, QConicalGradient
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -24,6 +26,32 @@ from dashboard.joint_state_node import JointStateNode
 from std_msgs.msg import Float32
 from rclpy.node import Node
 import time
+# ----------------------------------------------------------------------
+# Voice Worker
+# ----------------------------------------------------------------------
+class VoiceWorker(QThread):
+    def __init__(self):
+        super().__init__()
+        self.queue = Queue()
+        self.running = True
+        
+    def say(self, text):
+        self.queue.put(text)
+        
+    def run(self):
+        self.engine = pyttsx3.init()
+        self.engine.setProperty('rate', 160)
+        
+        while self.running:
+            if not self.queue.empty():
+                text = self.queue.get()
+                self.engine.say(text)
+                self.engine.runAndWait()
+            self.msleep(100)
+            
+    def stop(self):
+        self.running = False
+
 # ----------------------------------------------------------------------
 # Palette (dark theme, shared across every page)
 # ----------------------------------------------------------------------
@@ -602,7 +630,7 @@ class StatusStrip(QFrame):
 
         self.system_card = StatCard("⚠", ORANGE, "System Status", "ESP32 Offline", ORANGE)
         self.battery_card = BatteryStatCard()
-        self.emg_card = StatCard("〜", GREEN, "EMG Signal Quality", "GOOD", GREEN)
+        self.emg_card = StatCard("〜", GREEN, "MPU Signal Quality", "GOOD", GREEN)
         self.mode_card = ModeStatCard()
         self.time_card = StatCard("🕒", TEXT_MUTED, "Time", "12:45:30 PM", TEXT, "12 Jul 2025")
 
@@ -759,7 +787,7 @@ class Sidebar(QFrame):
 
         specs = [
             ("🏠", "HOME", "", TEXT),
-            ("〜", "MODE 1", "EMG-Driven Control", GREEN),
+            ("〜", "MODE 1", "MPU-Driven Control", GREEN),
             ("🚶", "MODE 2", "Pre-Programmed Gait", BLUE),
             ("🎛", "MODE 3", "Impedance Control", PURPLE),
             ("⚙", "PARAMETERS", "", TEXT),
@@ -851,8 +879,8 @@ class HomePage(QWidget):
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(14)
-        cards_row.addWidget(self._mode_card(1, "MODE 1", "EMG-Driven Control", "Voluntary Control",
-                                             "Detects muscle intent from EMG signals and provides proportional assistance.",
+        cards_row.addWidget(self._mode_card(1, "MODE 1", "MPU-Driven Control", "Voluntary Control",
+                                             "Detects movement intent from MPU accelerometer/gyroscope sensor signals and provides proportional assistance.",
                                              GREEN, GREEN_BG))
         cards_row.addWidget(self._mode_card(2, "MODE 2", "Pre-Programmed Gait", "Automatic Gait Patterns",
                                              "Executes predefined gait trajectories for walking, stairs and sit-to-stand.",
@@ -900,7 +928,7 @@ class HomePage(QWidget):
         e_lay = QVBoxLayout(emg_panel)
         e_lay.setContentsMargins(22, 18, 22, 18)
         e_lay.setSpacing(12)
-        e_lay.addWidget(section_title("📈  EMG SIGNAL OVERVIEW (mV)"))
+        e_lay.addWidget(section_title("📈  MPU ACCELEROMETER/GYROSCOPE SENSOR SIGNAL OVERVIEW (mV)"))
         grid = QGridLayout()
         grid.setSpacing(14)
         specs = [("Channel 1", "0.32 mV", GREEN), ("Channel 2", "0.28 mV", BLUE),
@@ -988,7 +1016,7 @@ class InfoBar(QFrame):
 
 
 class Mode1Page(QWidget):
-    """EMG-Driven Control."""
+    """MPU-Driven Control."""
 
     def __init__(self, main=None):
         super().__init__()
@@ -997,7 +1025,7 @@ class Mode1Page(QWidget):
         outer.setContentsMargins(20, 16, 20, 16)
         outer.setSpacing(14)
 
-        title = QLabel("MODE 1 – EMG-DRIVEN CONTROL")
+        title = QLabel("MODE 1 - MPU-DRIVEN CONTROL")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(f"color:{GREEN}; font-size:17px; font-weight:800; border:none;")
         outer.addWidget(title)
@@ -1006,12 +1034,12 @@ class Mode1Page(QWidget):
         row.setSpacing(14)
         outer.addLayout(row, 1)
 
-        # Left: EMG signals
+        # Left: MPU signals
         left = card_frame()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(18, 16, 18, 16)
         ll.setSpacing(4)
-        ll.addWidget(section_title("EMG SIGNALS (mV)"))
+        ll.addWidget(section_title("MPU SIGNALS (mV)"))
         specs = [("Channel 1", "0.32 mV", GREEN), ("Channel 2", "0.28 mV", BLUE),
                  ("Channel 3", "0.31 mV", ORANGE), ("Channel 4", "0.29 mV", PURPLE)]
         self.rows = []
@@ -1045,6 +1073,7 @@ class Mode1Page(QWidget):
 
         # Right: assistance status / sub-mode / quick info
         right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
         right_col.setSpacing(14)
         right_wrap = QWidget()
         right_wrap.setLayout(right_col)
@@ -1064,7 +1093,7 @@ class Mode1Page(QWidget):
         torque_row.addWidget(tv)
         torque_row.addStretch()
         al.addLayout(torque_row)
-        right_col.addWidget(assist)
+        right_col.addWidget(assist, 2)
 
         submode = card_frame()
         sl = QVBoxLayout(submode)
@@ -1115,7 +1144,7 @@ class Mode1Page(QWidget):
             dots_row.addWidget(dot)
         dots_row.addWidget(plus)
         sl.addLayout(dots_row)
-        right_col.addWidget(submode)
+        right_col.addWidget(submode, 1)
 
         quick = card_frame()
         ql = QVBoxLayout(quick)
@@ -1142,12 +1171,11 @@ class Mode1Page(QWidget):
             r.addStretch()
             r.addWidget(v)
             ql.addLayout(r)
-        right_col.addWidget(quick)
-        right_col.addStretch()
+        right_col.addWidget(quick, 1)
 
         row.addWidget(right_wrap, 3)
 
-        outer.addWidget(InfoBar("EMG signals detected. Providing proportional assistance.", GREEN))
+        outer.addWidget(InfoBar("MPU accelerometer/gyroscope sensor signals detected. Providing proportional assistance.", GREEN))
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -1274,7 +1302,7 @@ class Mode2Page(QWidget):
         )
         exec_btn.clicked.connect(self.execute_clicked)
         ll.addWidget(exec_btn)
-        row.addWidget(left, 3)
+        row.addWidget(left, 2)
 
         # Center: leg + posture + angle
         center = card_frame()
@@ -1334,10 +1362,11 @@ class Mode2Page(QWidget):
         status_row.addWidget(exv)
         status_row.addStretch()
         cl.addLayout(status_row)
-        row.addWidget(center, 5)
+        row.addWidget(center, 4)
 
         # Right: posture info / joint targets / quick controls
         right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
         right_col.setSpacing(14)
         right_wrap = QWidget()
         right_wrap.setLayout(right_col)
@@ -1429,9 +1458,8 @@ class Mode2Page(QWidget):
             btn_row.addWidget(b)
         ql.addLayout(btn_row)
         right_col.addWidget(quick)
-        right_col.addStretch()
 
-        row.addWidget(right_wrap, 3)
+        row.addWidget(right_wrap, 4)
 
         # ── Live Terminal Log ─────────────────────────────────────────────
         log = card_frame()
@@ -1485,9 +1513,8 @@ class Mode2Page(QWidget):
 
         display = self.selected_gait.replace('_', ' ').upper()
         self.log_message(f"Executing posture: {display} (Speed: {speed_val}%) — sending angles to M1 & M2...", BLUE)
-        if hasattr(self.main, 'execute_posture'):
-            self.main.execute_posture(self.selected_gait)
-        else:
+        self.log_message(hasattr(self.main, 'execute_posture'))
+        if hasattr(self.main, 'start_gait'):
             self.main.start_gait(self.selected_gait)
 
     def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
@@ -1669,7 +1696,7 @@ class Mode3Page(QWidget):
             leg_lay.addLayout(r)
         ll.addWidget(legend)
         ll.addStretch()
-        row.addWidget(left, 3)
+        row.addWidget(left, 2)
 
         # Center: leg graphic
         center = card_frame()
@@ -1694,6 +1721,7 @@ class Mode3Page(QWidget):
 
         # Right: control mode + manual joint control
         right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
         right_col.setSpacing(14)
         right_wrap = QWidget()
         right_wrap.setLayout(right_col)
@@ -1724,8 +1752,8 @@ class Mode3Page(QWidget):
         mv_v.setStyleSheet(f"color:{GREEN}; font-size:11.5px; font-weight:700; border:none; background:transparent;")
         cml.addWidget(mv_v)
         right_col.addWidget(ctrl)
-        right_col.addStretch()
-        row.addWidget(right_wrap, 3)
+
+        row.addWidget(right_wrap, 4)
 
         # Manual joint control panel (full width under the row)
         manual = card_frame()
@@ -1927,8 +1955,8 @@ class PlaceholderPage(QWidget):
 # ----------------------------------------------------------------------
 MODE_INFO = {
     0: dict(number=None, name="Not Selected", sub="", color=TEXT, bottom="System ready.", bottom_color=TEXT_MUTED, third="conn"),
-    1: dict(number=1, name="EMG-Driven Control", sub="Voluntary Control", color=GREEN,
-            bottom="EMG signals detected. Providing proportional assistance.", bottom_color=GREEN, third="emg"),
+    1: dict(number=1, name="MPU-Driven Control", sub="Voluntary Control", color=GREEN,
+            bottom="MPU accelerometer/gyroscope sensor signals detected. Providing proportional assistance.", bottom_color=GREEN, third="emg"),
     2: dict(number=2, name="Pre-Programmed Gait", sub="Automatic Gait Patterns", color=BLUE,
             bottom="Executing posture 'Knee Bend'.", bottom_color=BLUE, third="emg"),
     3: dict(number=3, name="Impedance Control", sub="ASSIST / RESIST", color=PURPLE,
@@ -2056,7 +2084,17 @@ class MainWindow(QWidget):
             'bottom': EdgeResizer(self, 'bottom')
         }
 
+        self.voice_worker = VoiceWorker()
+        self.voice_worker.start()
+        self.voice_worker.say("System ready.")
+
         self.go_to(0)
+
+    def closeEvent(self, event):
+        if hasattr(self, 'voice_worker'):
+            self.voice_worker.stop()
+            self.voice_worker.wait()
+        super().closeEvent(event)
     def update_battery(self, voltage):
         self.status_strip.update_battery(voltage)
 
@@ -2070,6 +2108,8 @@ class MainWindow(QWidget):
         self.status_strip.mode_card.set_mode(info["number"], info["name"], info["sub"], info["color"])
         self.status_strip.set_third_card(info["third"])
         self.bottom_bar.set_message(info["bottom"], info["bottom_color"])
+        if hasattr(self, 'voice_worker') and info["name"]:
+            self.voice_worker.say(f"{info['name']} activated.")
     
     def publish_joint_state(self, left_hip, left_knee, right_hip, right_knee):
         self.ros.publish_joint_state(left_hip, left_knee, right_hip, right_knee)
@@ -2082,6 +2122,8 @@ class MainWindow(QWidget):
 
     def reset_motors(self):
         """Publish reset_motors command on /motor_reset topic."""
+        if hasattr(self, 'voice_worker'):
+            self.voice_worker.say("Calibrating motors. Please stand clear.")
         self.ros.publish_reset_motors()
         self.bottom_bar.set_message(">> System Calibration: reset_motors command sent to ESP32.", ORANGE)
         if hasattr(self.mode2_page, 'log_message'):
