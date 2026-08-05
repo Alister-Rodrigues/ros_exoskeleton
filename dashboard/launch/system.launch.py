@@ -104,10 +104,10 @@ def generate_launch_description():
     )
 
     # 4. Robot 3D Visualization (RViz + Robot State Publisher) ────────────────
-    robot1_share = get_package_share_directory('robot1')
+    legs_share = get_package_share_directory('legs_description')
     rviz_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(robot1_share, 'launch', 'display.launch.py')
+            os.path.join(legs_share, 'launch', 'display.launch.py')
         ),
         condition=IfCondition(launch_rviz)
     )
