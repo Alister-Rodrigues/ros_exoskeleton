@@ -1485,25 +1485,33 @@ class Mode2Page(QWidget):
         ql.setSpacing(8)
         ql.addWidget(section_title("QUICK CONTROLS"))
 
-        self.speed_slider = SliderRow("Speed Level", 10, BLUE, "%")
+        self.speed_slider = SliderRow("Speed Level", 50, BLUE, "%")
+        # Debounce: wait 200ms after last drag before sending speed command
+        self._speed_debounce = QTimer(self)
+        self._speed_debounce.setSingleShot(True)
+        self._speed_debounce.setInterval(200)
+        self._speed_debounce.timeout.connect(
+            lambda: self.main.publish_motor_speed(self.speed_slider.slider.value())
+            if hasattr(self.main, 'publish_motor_speed') else None
+        )
         self.speed_slider.slider.valueChanged.connect(
-            lambda val: self.main.publish_motor_speed(val) if hasattr(self.main, 'publish_motor_speed') else None
+            lambda val: self._speed_debounce.start()
         )
         ql.addWidget(self.speed_slider)
         ql.addSpacing(4)
 
         btn_row = QHBoxLayout()
-        pause_b = QPushButton("⏸ Pause")
+        self.pause_btn = QPushButton("⏸ Pause")
         stop_b = QPushButton("■ Stop")
         home_b = QPushButton("⌂ Home Position")
-        pause_b.setStyleSheet(f"QPushButton {{ background:{ORANGE_BG}; color:{ORANGE}; border:1px solid {ORANGE}55; border-radius:8px; padding:6px; font-weight:600; font-size:11px; }}")
+        self.pause_btn.setStyleSheet(f"QPushButton {{ background:{ORANGE_BG}; color:{ORANGE}; border:1px solid {ORANGE}55; border-radius:8px; padding:6px; font-weight:600; font-size:11px; }}")
         stop_b.setStyleSheet(f"QPushButton {{ background:{RED_BG}; color:{RED}; border:1px solid {RED}55; border-radius:8px; padding:6px; font-weight:600; font-size:11px; }}")
         home_b.setStyleSheet(f"QPushButton {{ background:{BLUE_BG}; color:{BLUE}; border:1px solid {BLUE}55; border-radius:8px; padding:6px; font-weight:600; font-size:11px; }}")
 
         stop_b.clicked.connect(self.stop_clicked)
         home_b.clicked.connect(self.home_position_clicked)
-        pause_b.clicked.connect(lambda: self.log_message('Paused.', ORANGE))
-        for b in (pause_b, stop_b, home_b):
+        self.pause_btn.clicked.connect(self.pause_clicked)
+        for b in (self.pause_btn, stop_b, home_b):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_row.addWidget(b)
         ql.addLayout(btn_row)
@@ -1569,6 +1577,32 @@ class Mode2Page(QWidget):
         if hasattr(self.main, 'start_gait'):
             # repeats=-1 → loop forever until stop_gait() is called
             self.main.start_gait(self.selected_gait, repeats=-1)
+
+
+    def pause_clicked(self):
+        """Toggle pause/resume. Button label and colour flip on each click."""
+        if hasattr(self.main, 'ros') and self.main.ros.paused:
+            # Currently paused → resume
+            if hasattr(self.main, 'resume_gait'):
+                self.main.resume_gait()
+            self.pause_btn.setText("⏸ Pause")
+            self.pause_btn.setStyleSheet(
+                f"QPushButton {{ background:{ORANGE_BG}; color:{ORANGE}; "
+                f"border:1px solid {ORANGE}55; border-radius:8px; "
+                f"padding:6px; font-weight:600; font-size:11px; }}"
+            )
+            self.log_message('▶  RESUMED — gait continuing from current step.', GREEN)
+        else:
+            # Running → pause
+            if hasattr(self.main, 'pause_gait'):
+                self.main.pause_gait()
+            self.pause_btn.setText("▶ Resume")
+            self.pause_btn.setStyleSheet(
+                f"QPushButton {{ background:{GREEN_BG}; color:{GREEN}; "
+                f"border:1px solid {GREEN}55; border-radius:8px; "
+                f"padding:6px; font-weight:600; font-size:11px; }}"
+            )
+            self.log_message('⏸  PAUSED — motors holding position. Press Resume to continue.', ORANGE)
 
     def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
         if hasattr(self, 'knee_angle_val_label'):
@@ -1704,10 +1738,10 @@ class Mode3Page(QWidget):
         ll.setSpacing(8)
         ll.addWidget(section_title("🦾  EXOSKELETON STATUS"))
         joint_specs = [
-            ("Hip Left (Thigh A)", "28°", "61%", GREEN),
-            ("Knee Left (Knee B)", "-47°", "42%", BLUE),
-            ("Hip Right (Thigh C)", "22°", "38%", PURPLE),
-            ("Knee Right (Knee D)", "-55°", "59%", ORANGE),
+            ("Motor 1 – Hip Left (M1)", "0°", "0%", GREEN),
+            ("Motor 2 – Knee Left (M2)", "0°", "0%", BLUE),
+            ("Motor 3 – Hip Right (M3)", "0°", "0%", PURPLE),
+            ("Motor 4 – Knee Right (M4)", "0°", "0%", ORANGE),
         ]
         self.status_labels = []
         for name, angle, pct, color in joint_specs:
@@ -1740,8 +1774,8 @@ class Mode3Page(QWidget):
         leg_lay = QVBoxLayout(legend)
         leg_lay.setContentsMargins(0, 8, 0, 0)
         leg_lay.setSpacing(4)
-        for name, color in (("Thigh A (Left)", GREEN), ("Knee B (Left)", BLUE),
-                             ("Thigh C (Right)", PURPLE), ("Knee D (Right)", ORANGE)):
+        for name, color in (("Motor 1 – Hip Left", GREEN), ("Motor 2 – Knee Left", BLUE),
+                             ("Motor 3 – Hip Right", PURPLE), ("Motor 4 – Knee Right", ORANGE)):
             r = QHBoxLayout()
             dot = QLabel("●")
             dot.setStyleSheet(f"color:{color}; font-size:10px; border:none; background:transparent;")
@@ -1768,10 +1802,10 @@ class Mode3Page(QWidget):
         self.leg.setGridVisible(False)
         self.leg.setBackgroundColor(QColor(BLUE))
         self.leg.setRobotAlpha(0.5)
-        self.hip_angle_l = 28
-        self.knee_angle_l = -47
-        self.hip_angle_r = 22
-        self.knee_angle_r = -55
+        self.hip_angle_l = 0
+        self.knee_angle_l = 0
+        self.hip_angle_r = 0
+        self.knee_angle_r = 0
         cl.addWidget(self.leg, alignment=Qt.AlignmentFlag.AlignCenter)
         cl.addStretch()
         row.addWidget(center, 4)
@@ -1826,44 +1860,42 @@ class Mode3Page(QWidget):
         sliders_row.setSpacing(20)
         self.sliders = []
         for label, value, color in (
-            ("Motor 1 – Thigh A (Left)", 28, GREEN),
-            ("Motor 2 – Knee B (Left)", -47, BLUE),
-            ("Motor 3 – Thigh C (Right)", 22, PURPLE),
-            ("Motor 4 – Knee D (Right)", -55, ORANGE),
+            ("Motor 1 – Hip Left (M1)", 0, GREEN),
+            ("Motor 2 – Knee Left (M2)", 0, BLUE),
+            ("Motor 3 – Hip Right (M3)", 0, PURPLE),
+            ("Motor 4 – Knee Right (M4)", 0, ORANGE),
         ):
             s = SliderRow(label, value, color)
             sliders_row.addWidget(s)
             self.sliders.append(s)
 
-        # Left Hip — range 0..90, start at 28°
-        self.sliders[0].set_range(0, 90, "°", initial=28)
+        # Motor 1 / Left Hip — range -45..90°, home at 0°
+        self.sliders[0].set_range(-45, 90, "°", initial=0)
         self.sliders[0].slider.valueChanged.connect(
             lambda v: self.update_joint_ui(0, v)
         )
 
-        # Left Knee — range -90..0, start at -47°
-        # NOTE: must pass initial= here because Qt clamps the value=-47
-        # set during SliderRow.__init__ (which used range 0-100) to 0.
-        self.sliders[1].set_range(-90, 0, "°", initial=-47)
+        # Motor 2 / Left Knee — range -180..0, start at 0°
+        self.sliders[1].set_range(-180, 0, "°", initial=0)
         self.sliders[1].slider.valueChanged.connect(
             lambda v: self.update_joint_ui(1, v)
         )
 
-        # Right Hip — range 0..90, start at 22°
-        self.sliders[2].set_range(0, 90, "°", initial=22)
+        # Motor 3 / Right Hip — range -45..90°, home at 0°
+        self.sliders[2].set_range(-45, 90, "°", initial=0)
         self.sliders[2].slider.valueChanged.connect(
             lambda v: self.update_joint_ui(2, v)
         )
 
-        # Right Knee — range -90..0, start at -55°
-        self.sliders[3].set_range(-90, 0, "°", initial=-55)
+        # Motor 4 / Right Knee — range -180..0, start at 0°
+        self.sliders[3].set_range(-180, 0, "°", initial=0)
         self.sliders[3].slider.valueChanged.connect(
             lambda v: self.update_joint_ui(3, v)
         )
 
         ml.addLayout(sliders_row)
 
-        note = QLabel("ⓘ  0% = Minimum Assistance (Least Effort)     100% = Maximum Assistance (Most Effort)")
+        note = QLabel("ⓘ  Motor 1 = Left Hip (M1)    Motor 2 = Left Knee (M2)    Motor 3 = Right Hip (M3)    Motor 4 = Right Knee (M4)")
         note.setStyleSheet(f"color:{TEXT_MUTED}; font-size:10.5px; border:none; background:transparent; margin-top:6px;")
         ml.addWidget(note)
         outer.addWidget(manual)
@@ -1950,7 +1982,21 @@ class Mode3Page(QWidget):
         self.update_robot()
 
     def _home_position_clicked(self):
-        """Move all joints back to 0° (stand neutral)."""
+        """Move all joints back to 0° (stand neutral) and reset sliders to match."""
+        # Reset the internal state variables
+        self.hip_angle_l = 0
+        self.knee_angle_l = 0
+        self.hip_angle_r = 0
+        self.knee_angle_r = 0
+
+        # Reset each slider to 0 — blockSignals prevents multiple debounce triggers
+        for s in self.sliders:
+            s.slider.blockSignals(True)
+            s.slider.setValue(0)
+            s.slider.blockSignals(False)
+            s.value_label.setText(f"0°")
+
+        # Send a single clean home command
         self.main.publish_motor_angles(0.0, 0.0, 0.0, 0.0)
         self.main.publish_joint_state(0.0, 0.0, 0.0, 0.0)
 
@@ -1990,7 +2036,7 @@ class Mode3Page(QWidget):
 
         if hasattr(self, 'status_labels') and index < len(self.status_labels):
             self.status_labels[index]['angle'].setText(f"Angle: {int(value)}°")
-            self.status_labels[index]['pct'].setText(f"{int(abs(value) / 90 * 100)}%")
+            self.status_labels[index]['pct'].setText(f"{int(abs(value) / 180 * 100)}%")
             self.status_labels[index]['pct'].setStyleSheet(
                 f"color:{color}; font-size:13px; font-weight:800; border:none; background:transparent;"
             )
@@ -2000,20 +2046,24 @@ class Mode3Page(QWidget):
             self._debounce_timer.start()
 
     def set_joint_angles(self, left_hip, left_knee, right_hip, right_knee):
-        """Update status display labels from external feedback.
+        """Update status display labels from live motor feedback.
         
         In Mode 3, the joint angles are slider-controlled, so we must NOT
         overwrite self.hip/knee_angle_* here — doing so would cause the
-        motor_feedback loop (running at 20Hz) to fight the slider and prevent
-        the debounce timer from ever sending the correct target position.
+        motor_feedback loop to fight the slider and prevent the debounce
+        timer from ever sending the correct target position.
         We only update the informational status labels on the left panel.
         """
         values = [left_hip, left_knee, right_hip, right_knee]
         for i, value in enumerate(values):
             if hasattr(self, 'status_labels') and i < len(self.status_labels):
                 self.status_labels[i]['angle'].setText(f"Angle: {int(value)}°")
-                pct = int(abs(value) / 90 * 100)
+                pct = int(abs(value) / 180 * 100)
                 self.status_labels[i]['pct'].setText(f"{pct}%")
+
+    def on_motor_feedback(self, left_hip, left_knee, right_hip, right_knee):
+        """Receive live motor feedback and update the status labels for all 4 motors."""
+        self.set_joint_angles(left_hip, left_knee, right_hip, right_knee)
 
 
 
@@ -2204,6 +2254,23 @@ class MainWindow(QWidget):
         self.status_strip.battery_card.sub_label.setText("Battery Voltage")
     
     def go_to(self, index):
+        # ── Safety: stop any running gait and home all motors on every switch ──
+        if hasattr(self, 'ros'):
+            self.ros.stop_gait()
+            self.ros.publish_motor_angles(0.0, 0.0, 0.0, 0.0)
+            self.ros.publish_joint_state(0.0, 0.0, 0.0, 0.0)
+
+        # ── Reset Mode 3 sliders to home position ────────────────────────────
+        if hasattr(self, 'mode3_page'):
+            p = self.mode3_page
+            p.hip_angle_l = 0; p.knee_angle_l = 0
+            p.hip_angle_r = 0; p.knee_angle_r = 0
+            for s in p.sliders:
+                s.slider.blockSignals(True)
+                s.slider.setValue(0)
+                s.slider.blockSignals(False)
+                s.value_label.setText("0°")
+
         self.stack.setCurrentIndex(index)
         self.sidebar.select(index)
         info = MODE_INFO[index]
@@ -2290,6 +2357,20 @@ class MainWindow(QWidget):
 
     def stop_gait(self):
         self.ros.stop_gait()
+        # Reset pause button back to default state
+        if hasattr(self, 'mode2_page') and hasattr(self.mode2_page, 'pause_btn'):
+            self.mode2_page.pause_btn.setText("⏸ Pause")
+            self.mode2_page.pause_btn.setStyleSheet(
+                f"QPushButton {{ background:{ORANGE_BG}; color:{ORANGE}; "
+                f"border:1px solid {ORANGE}55; border-radius:8px; "
+                f"padding:6px; font-weight:600; font-size:11px; }}"
+            )
+
+    def pause_gait(self):
+        self.ros.pause_gait()
+
+    def resume_gait(self):
+        self.ros.resume_gait()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

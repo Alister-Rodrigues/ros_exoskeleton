@@ -12,7 +12,7 @@ def generate_launch_description():
             parameters=[{
                 'publish_rate_hz': 1.0,
                 'use_serial': False,           # set True when ESP32 is connected
-                'serial_port': '/dev/ttyUSB0',
+                'serial_port': '/dev/ttyACM0',
                 'baud_rate': 115200,
             }]
         )

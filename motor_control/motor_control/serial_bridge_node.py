@@ -32,7 +32,7 @@ class SerialBridgeNode(Node):
         super().__init__('serial_bridge_node')
 
         # ── Parameters (override at launch or from command line) ────────────
-        self.declare_parameter('serial_port', '/dev/ttyUSB0')
+        self.declare_parameter('serial_port', '/dev/ttyACM0')
         self.declare_parameter('baud_rate', 115200)
         self.declare_parameter('send_interval_ms', 50)  # min ms between sends
 
@@ -152,17 +152,19 @@ class SerialBridgeNode(Node):
                     if line:
                         print(f'[ESP32] {line}', flush=True)
                         # ── Parse actual motor positions from [RUN] lines ────────
-                        # Format: [RUN] Spd:10% M1 Tgt:80.2° Act:16.7° Err:95 [..] | M2 Tgt:-74.5° Act:-20.1° Err:-81 [..]
+                        # Format: [RUN] Spd:10% M1 Tgt:0.0° Act:2.0° Err:-3 [OK] | M2 Tgt:0.0° Act:1.3° Err:-2 [OK] | M3 Tgt:180.0° Act:179.5° Err:1 [OK] | M4 Tgt:0.0° Act:1.3° Err:-2 [OK]
                         if '[RUN]' in line:
                             try:
-                                m1_act = re.search(r'M1 Tgt:[-\d.]+.? Act:([-\d.]+)', line)
-                                m2_act = re.search(r'M2 Tgt:[-\d.]+.? Act:([-\d.]+)', line)
+                                m1_act = re.search(r'M1 Tgt:[-\d.]+[^\d]? Act:([-\d.]+)', line)
+                                m2_act = re.search(r'M2 Tgt:[-\d.]+[^\d]? Act:([-\d.]+)', line)
+                                m3_act = re.search(r'M3 Tgt:[-\d.]+[^\d]? Act:([-\d.]+)', line)
+                                m4_act = re.search(r'M4 Tgt:[-\d.]+[^\d]? Act:([-\d.]+)', line)
                                 if m1_act and m2_act and rclpy.ok():
                                     fb_msg = MotorAngles()
                                     fb_msg.left_hip   = float(m1_act.group(1))
                                     fb_msg.left_knee  = float(m2_act.group(1))
-                                    fb_msg.right_hip  = 0.0   # right leg not wired yet
-                                    fb_msg.right_knee = 0.0
+                                    fb_msg.right_hip  = float(m3_act.group(1)) if m3_act else 0.0
+                                    fb_msg.right_knee = float(m4_act.group(1)) if m4_act else 0.0
                                     self.feedback_pub.publish(fb_msg)
                             except Exception as e:
                                 pass  # Don't spam logs on every line
@@ -221,20 +223,27 @@ class SerialBridgeNode(Node):
     def _motor_commands_callback(self, msg: MotorAngles) -> None:
         """
         Receive MotorAngles and forward to ESP32:
-          left_hip  -> Motor 1  ->  "1:<angle>"
-          left_knee -> Motor 2  ->  "2:<angle>"
+          left_hip   -> Motor 1  ->  "1:<angle>"
+          left_knee  -> Motor 2  ->  "2:<angle>"
+          right_hip  -> Motor 3  ->  "3:<angle>"
+          right_knee -> Motor 4  ->  "4:<angle>"
         Angles are rounded to 1 decimal place.
         """
-        hip_cmd  = f'1:{msg.left_hip:.1f}'
-        knee_cmd = f'2:{msg.left_knee:.1f}'
+        m1_cmd = f'1:{msg.left_hip:.1f}'
+        m2_cmd = f'2:{msg.left_knee:.1f}'
+        m3_cmd = f'3:{msg.right_hip:.1f}'
+        m4_cmd = f'4:{msg.right_knee:.1f}'
 
         self.get_logger().info(
             f'[SerialBridgeNode] Received -> '
-            f'left_hip={msg.left_hip:.1f}°  left_knee={msg.left_knee:.1f}°'
+            f'M1(left_hip)={msg.left_hip:.1f}°  M2(left_knee)={msg.left_knee:.1f}°  '
+            f'M3(right_hip)={msg.right_hip:.1f}°  M4(right_knee)={msg.right_knee:.1f}°'
         )
 
-        self._send_command(hip_cmd)
-        self._send_command(knee_cmd)
+        self._send_command(m1_cmd)
+        self._send_command(m2_cmd)
+        self._send_command(m3_cmd)
+        self._send_command(m4_cmd)
 
     def _motor_reset_callback(self, msg: String) -> None:
         """

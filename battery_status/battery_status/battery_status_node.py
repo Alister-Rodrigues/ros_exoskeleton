@@ -35,7 +35,7 @@ class BatteryStatusNode(Node):
 
         # ── Parameters ──────────────────────────────────────────────────────
         self.declare_parameter('publish_rate_hz', 1.0)    # how often to publish
-        self.declare_parameter('serial_port', '/dev/ttyUSB0')
+        self.declare_parameter('serial_port', '/dev/ttyACM0')
         self.declare_parameter('baud_rate', 115200)
         self.declare_parameter('use_serial', False)       # set True when ESP32 ready
 

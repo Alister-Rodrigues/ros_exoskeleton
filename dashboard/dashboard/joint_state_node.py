@@ -134,6 +134,7 @@ class JointStateNode(Node):
         self.total_repeats = 0
         self.hold_time = 2.0
         self.running = False
+        self.paused = False
 
         self.hold_timer = None
         self.holding = False
@@ -248,11 +249,10 @@ class JointStateNode(Node):
             msg.right_knee
         )
         
-        if not self.running:
+        if not self.running or self.paused:
             return
         
         if not self.holding:
-            self.get_logger().info("Checking pose")
             if self.pose_reached(msg):
                 self.holding = True
                 self.start_hold_timer()
@@ -299,16 +299,17 @@ class JointStateNode(Node):
         )
     
     def pose_reached(self, msg):
-        """Check if the two physical motors (M1=left_hip, M2=left_knee) have
-        reached the current target pose.  right_hip / right_knee are not
-        physical motors on this device, so their feedback is always 0 and
-        must NOT be included in the check."""
+        """Check if all four physical motors (M1-M4) have reached the current
+        target pose within tolerance.  M1=left_hip, M2=left_knee,
+        M3=right_hip, M4=right_knee — all are now wired and active."""
         pose_name = self.current_gait[self.current_step]
         target = self.poses[pose_name]
         tolerance = 3.0   # slightly above the ESP32's natural ±2° error margin
         return (
-            abs(msg.left_hip  - math.degrees(target["left_hip_joint"]))  < tolerance and
-            abs(msg.left_knee - math.degrees(target["left_knee_joint"])) < tolerance
+            abs(msg.left_hip   - math.degrees(target["left_hip_joint"]))   < tolerance and
+            abs(msg.left_knee  - math.degrees(target["left_knee_joint"]))  < tolerance and
+            abs(msg.right_hip  - math.degrees(target["right_hip_joint"]))  < tolerance and
+            abs(msg.right_knee - math.degrees(target["right_knee_joint"])) < tolerance
         )
     
     def start_hold_timer(self):
@@ -321,6 +322,8 @@ class JointStateNode(Node):
         )
 
     def next_step(self):
+        if not self.running or self.paused:
+            return
         self.hold_timer.cancel()
         self.current_step += 1
         if self.current_step >= len(self.current_gait):
@@ -340,8 +343,34 @@ class JointStateNode(Node):
             
     def stop_gait(self):
         self.running = False
+        self.paused  = False
         self.current_step = 0
         self.current_repeat = 0
 
         if self.hold_timer is not None:
             self.hold_timer.cancel()
+
+    def pause_gait(self):
+        """Freeze the gait loop at the current step without losing position."""
+        if not self.running or self.paused:
+            return
+        self.paused = True
+        # Cancel the hold timer so the loop doesn't advance while paused
+        if self.hold_timer is not None:
+            self.hold_timer.cancel()
+        self.get_logger().info('[JointStateNode] Gait PAUSED')
+
+    def resume_gait(self):
+        """Resume from the exact step and hold-timer state where we paused."""
+        if not self.running or not self.paused:
+            return
+        self.paused = False
+        self.get_logger().info('[JointStateNode] Gait RESUMED')
+        if self.holding:
+            # We were in the hold phase — restart the hold timer for the remainder
+            self.start_hold_timer()
+        else:
+            # We were still moving toward a target — re-send the current pose
+            # so the ESP32 keeps driving and pose_reached() can fire again
+            self.send_current_pose()
+

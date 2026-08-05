@@ -8,7 +8,7 @@ def generate_launch_description():
             cmd=[
                 'ros2', 'run', 'motor_control', 'serial_bridge',
                 '--ros-args',
-                '-p', 'serial_port:=/dev/ttyUSB0',
+                '-p', 'serial_port:=/dev/ttyACM0',
                 '-p', 'baud_rate:=115200',
             ],
             output='screen'

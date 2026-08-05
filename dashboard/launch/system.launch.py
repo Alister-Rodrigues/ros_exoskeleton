@@ -23,7 +23,7 @@ def generate_launch_description():
     # ── Launch Arguments ────────────────────────────────────────────────────────
     serial_port_arg = DeclareLaunchArgument(
         'serial_port',
-        default_value='/dev/ttyUSB0',
+        default_value='/dev/ttyACM0',
         description='Serial port for ESP32 UART communication'
     )
     baud_rate_arg = DeclareLaunchArgument(
